@@ -74,6 +74,7 @@ svg.chev { width: 10px; height: 10px; }
 .fmt > div { position: relative; }
 .fbtn { min-width: 34px; height: 30px; padding: 0 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .fbtn:hover, .fbtn[aria-pressed="true"], .fbtn[aria-expanded="true"] { background: var(--hover); }
+.fbtn:disabled { opacity: .35; pointer-events: none; }
 .fbtn b { font-weight: 700; font-size: 15px; }
 .fmt .menu { min-width: 180px; }
 .fmt.right .menu { left: auto; right: 0; }
@@ -442,6 +443,7 @@ bOv.append(bMir, bLayer); $('editorWrap').append(bOv);
 function blkClear() {
   clearInterval(blk.timer); blk.on = blk.drag = false; blk.segs = []; blk.lines = [];
   bLayer.textContent = ''; bMir.textContent = '';
+  updateFormatItems();
   if (blockUnwrapped) { blockUnwrapped = false; applySettings(); }
 }
 function blkMirror() {
@@ -514,6 +516,26 @@ function blkMove() {
   blk.segs = blkSegs(blk.a.x, blk.a.y, blk.b.x, blk.b.y); blkPaint();
 }
 const blkText = () => blk.segs.map(s => ed.value.slice(s.a, s.b)).join('\n');
+// With a block, only bold, italic and strikethrough apply (markers around each line's part); the rest work
+// on whole lines or the caret, which a block doesn't have, so they're off while it lasts
+const blockFormatting = () => blockMode || blk.on;
+function updateFormatItems() { document.querySelectorAll('.fbtn.linefmt').forEach(b => { b.disabled = blockFormatting(); }); }
+function blkWrap(m) {
+  const v = ed.value, n = m.length, segs = blk.segs.map(s => { // markers can't sit next to a space, so edge spaces stay outside
+    let a = s.a, b = s.b; while (a < b && /\s/.test(v[a])) a++; while (b > a && /\s/.test(v[b - 1])) b--; return { a, b };
+  }).filter(s => s.b > s.a);
+  if (!segs.length) return;
+  const has = s => v.slice(s.a - n, s.a) === m && v.slice(s.b, s.b + n) === m, all = segs.every(has);
+  const lo = Math.max(0, segs[0].a - n), hi = Math.min(v.length, segs[segs.length - 1].b + n); let r = '', p = lo;
+  for (const s of segs) {
+    if (all) { r += v.slice(p, s.a - n) + v.slice(s.a, s.b); p = s.b + n; }
+    else if (!has(s)) { r += v.slice(p, s.a) + m + v.slice(s.a, s.b) + m; p = s.b; }
+  }
+  r += v.slice(p, hi);
+  blkClear(); ed.focus(); ed.setSelectionRange(lo, hi);
+  if (!document.execCommand('insertText', false, r)) { ed.setRangeText(r, lo, hi, 'end'); ed.dispatchEvent(new Event('input')); }
+  ed.setSelectionRange(segs[0].a, segs[0].a);
+}
 function blkDelete() { // one edit over the whole span, so a single undo restores it
   const segs = blk.segs, v = ed.value; if (!segs.length) return;
   const lo = segs[0].a, hi = segs[segs.length - 1].b; let r = '', p = lo;
@@ -552,7 +574,7 @@ ed.addEventListener('mousedown', e => {
     if (ed.scrollTop !== t || ed.scrollLeft !== l) blkMove();
   }, 40);
 });
-document.addEventListener('mousemove', e => { if (blk.drag) { blk.px = e.clientX; blk.py = e.clientY; blk.on = true; blkMove(); } });
+document.addEventListener('mousemove', e => { if (blk.drag) { blk.px = e.clientX; blk.py = e.clientY; if (!blk.on) { blk.on = true; updateFormatItems(); } blkMove(); } });
 document.addEventListener('mouseup', () => { if (blk.drag) { blk.drag = false; clearInterval(blk.timer); } });
 ed.addEventListener('copy', e => { if (blk.on && blk.segs.length) { e.clipboardData.setData('text/plain', blkText()); e.preventDefault(); } });
 ed.addEventListener('cut', e => { if (blk.on && blk.segs.length) { e.clipboardData.setData('text/plain', blkText()); e.preventDefault(); blkDelete(); } });
@@ -760,28 +782,29 @@ function dropdown(btnHtml, label, items) {
 }
 function buildFormatBar() {
   const f = document.createElement('div'); f.className = 'fmt';
+  const lf = el => { (el.matches('.fbtn') ? el : el.querySelector('.fbtn')).classList.add('linefmt'); return el; };
   f.append(
-    dropdown('<span>H1</span>', '제목', [['본문', '', () => setHeading(0)], ...[1, 2, 3, 4, 5, 6].map(n => ['제목 ' + n, '#'.repeat(n), () => setHeading(n)])]),
-    dropdown(ICON.list, '목록', [['글머리 기호 목록', '', () => toggleLinePrefix('- ')], ['번호 매기기 목록', '', () => toggleLinePrefix('1. ')], ['할 일 목록', '', () => toggleLinePrefix('- [ ] ')]]),
+    lf(dropdown('<span>H1</span>', '제목', [['본문', '', () => setHeading(0)], ...[1, 2, 3, 4, 5, 6].map(n => ['제목 ' + n, '#'.repeat(n), () => setHeading(n)])])),
+    lf(dropdown(ICON.list, '목록', [['글머리 기호 목록', '', () => toggleLinePrefix('- ')], ['번호 매기기 목록', '', () => toggleLinePrefix('1. ')], ['할 일 목록', '', () => toggleLinePrefix('- [ ] ')]])),
     fbtn('<b>B</b>', '굵게 (Ctrl+B)', () => wrapSel('**')),
     fbtn(ICON.italic, '기울임꼴 (Ctrl+I)', () => wrapSel('*')),
     fbtn(ICON.strike, '취소선', () => wrapSel('~~')),
-    fbtn(ICON.link, '링크 (Ctrl+K)', insertLink),
-    dropdown(ICON.table, '표 및 기타 서식', [
+    lf(fbtn(ICON.link, '링크 (Ctrl+K)', insertLink)),
+    lf(dropdown(ICON.table, '표 및 기타 서식', [
       ['표 삽입', '', insertTable],
       ['인라인 코드', '', () => wrapSel('`')],
       ['코드 블록', '', () => wrapSel('```\n', '\n```')],
       ['인용', '', () => toggleLinePrefix('> ')],
       ['가로줄', '', () => insertText('\n\n---\n\n')],
-    ]),
-    fbtn(ICON.clear, '서식 지우기', clearFormatting),
+    ])),
+    lf(fbtn(ICON.clear, '서식 지우기', clearFormatting)),
     blockBtn(),
   );
   return f;
 }
 // Toggle: while on, a plain drag selects a block (Alt+drag always does) and lines are shown unwrapped
 function blockBtn() {
-  const b = fbtn(ICON.block, '블록 선택 (Alt+드래그)', () => { blockMode = !blockMode; b.setAttribute('aria-pressed', String(blockMode)); blkClear(); applySettings(); ed.focus(); });
+  const b = fbtn(ICON.block, '블록 선택 (Alt+드래그)', () => { blockMode = !blockMode; b.setAttribute('aria-pressed', String(blockMode)); blkClear(); applySettings(); updateFormatItems(); ed.focus(); });
   b.setAttribute('aria-pressed', 'false'); return b;
 }
 function buildRightBar() {
@@ -837,6 +860,7 @@ function wrapLines(a, b, open) {
   replaceRange(a, b, out, a, a + out.length);
 }
 function wrapSel(open, close = open) {
+  if (blk.on && open === close && ['**', '*', '~~'].includes(open)) return blkWrap(open);
   if (settings.preview) togglePreview();
   const v = ed.value;
   let a = ed.selectionStart, b = ed.selectionEnd;
@@ -1082,6 +1106,8 @@ document.addEventListener('keydown', e => {
   const k = e.key.toLowerCase(), c = e.ctrlKey || e.metaKey;
   const act = (fn) => { e.preventDefault(); closeMenus(); fn(); };
   if (blk.on && !['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) {
+    if (c && !e.shiftKey && (k === 'b' || k === 'i')) { e.preventDefault(); blkWrap(k === 'b' ? '**' : '*'); return; }
+    if (c && k === 'k') { e.preventDefault(); return; }
     if (c && (k === 'c' || k === 'x')) {
       e.preventDefault(); navigator.clipboard.writeText(blkText()).catch(() => {}); if (k === 'x') blkDelete(); return;
     }
@@ -1094,7 +1120,7 @@ document.addEventListener('keydown', e => {
   if (c && k === 'o') return act(openFile);
   if (c && !e.shiftKey && k === 'b') return act(() => wrapSel('**'));
   if (c && !e.shiftKey && k === 'i') return act(() => wrapSel('*'));
-  if (c && !e.shiftKey && k === 'k') return act(insertLink);
+  if (c && !e.shiftKey && k === 'k') return act(() => { if (!blockFormatting()) insertLink(); });
   if (c && e.shiftKey && k === 'm') return act(togglePreview);
   if (c && k === 'f') return act(() => showFind(false));
   if (c && k === 'h') return act(() => showFind(true));

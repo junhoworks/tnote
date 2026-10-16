@@ -896,6 +896,7 @@ namespace TNote
         Timer blockTimer;
         public bool BlockActive { get { return blockOn; } }
         public bool BlockMode; // the toolbar toggle: a plain drag selects a block too
+        public event Action BlockChanged;
 
         Point ScrollPos { get { var p = Point.Empty; SendMessage(Handle, 0x0400 + 221 /* EM_GETSCROLLPOS */, IntPtr.Zero, ref p); return p; } }
         int LineAt(int y) { return GetLineFromCharIndex(GetCharIndexFromPosition(new Point(0, Math.Max(0, Math.Min(ClientSize.Height - 1, y))))); }
@@ -923,7 +924,7 @@ namespace TNote
                 blockQuiet = true; Select(ci, 0); blockQuiet = false;
                 blockLine0 = blockLine1 = LineAt(p.Y);
                 blockX0 = blockX1 = Math.Max(0, Math.Min(ClientSize.Width - 1, p.X)) + sp.X;
-                blockOn = blockDrag = true; Capture = true;
+                blockOn = blockDrag = true; Capture = true; if (BlockChanged != null) BlockChanged();
                 if (blockTimer == null) { blockTimer = new Timer { Interval = 40 }; blockTimer.Tick += (s, e) => BlockAutoScroll(); }
                 blockTimer.Start();
                 Invalidate();
@@ -985,6 +986,7 @@ namespace TNote
         {
             if (!blockOn) return;
             blockOn = blockDrag = false;
+            if (BlockChanged != null) BlockChanged();
             if (blockTimer != null) blockTimer.Stop();
             if (blockUnwrapped)
             {
@@ -1077,6 +1079,51 @@ namespace TNote
 
         public void BlockCopy() { Clipboard.SetText(BlockText()); }
         public void BlockCut() { BlockCopy(); BlockDelete(); }
+
+        // Bold, italic or strikethrough on each line's part of the block: formatting in place (the block stays),
+        // or markers around each part in the symbol view (the text moves, so the block ends)
+        public void BlockFormat(MdFormat.A a, string marker, bool marks)
+        {
+            var segs = BlockSegments().Where(sg => sg[1] > sg[0]).ToList();
+            var doc = Doc; if (segs.Count == 0 || doc == null) return;
+            blockQuiet = true;
+            bool grouped = false;
+            try { doc.BeginEditCollection(); grouped = true; } catch (Exception) { }
+            try
+            {
+                if (marks)
+                {
+                    string s = PaintText; int m = marker.Length;
+                    foreach (var sg in segs) // markers can't sit next to a space, so edge spaces stay outside
+                    {
+                        while (sg[0] < sg[1] && char.IsWhiteSpace(s[sg[0]])) sg[0]++;
+                        while (sg[1] > sg[0] && char.IsWhiteSpace(s[sg[1] - 1])) sg[1]--;
+                    }
+                    segs.RemoveAll(sg => sg[1] <= sg[0]);
+                    if (segs.Count == 0) return;
+                    Func<int[], bool> has = sg => sg[0] >= m && sg[1] + m <= s.Length && s.Substring(sg[0] - m, m) == marker && s.Substring(sg[1], m) == marker;
+                    bool all = segs.All(has);
+                    for (int i = segs.Count - 1; i >= 0; i--) // bottom up, and each part's end before its start
+                    {
+                        var sg = segs[i];
+                        if (all) { doc.Range(sg[1], sg[1] + m).Text = ""; doc.Range(sg[0] - m, sg[0]).Text = ""; }
+                        else if (!has(sg)) { doc.Range(sg[1], sg[1]).Text = marker; doc.Range(sg[0], sg[0]).Text = marker; }
+                    }
+                }
+                else
+                {
+                    Func<dynamic, bool> on = f => (int)(a == MdFormat.A.Bold ? f.Bold : a == MdFormat.A.Italic ? f.Italic : f.StrikeThrough) == tomTrue;
+                    int v = segs.All(sg => on(doc.Range(sg[0], sg[1]).Font)) ? 0 : tomTrue;
+                    foreach (var sg in segs)
+                    {
+                        var f = doc.Range(sg[0], sg[1]).Font;
+                        if (a == MdFormat.A.Bold) f.Bold = v; else if (a == MdFormat.A.Italic) f.Italic = v; else f.StrikeThrough = v;
+                    }
+                }
+            }
+            finally { if (grouped) doc.EndEditCollection(); blockQuiet = false; }
+            if (marks) ClearBlock(); else Invalidate();
+        }
 
         public void BlockDelete()
         {
@@ -1342,7 +1389,7 @@ namespace TNote
             i.Paint += (s, e) =>
             {
                 var g = e.Graphics; g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
-                using (var b = new SolidBrush(P.Text))
+                using (var b = new SolidBrush(i.Enabled ? P.Text : P.Muted))
                 using (var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
                 {
                     var main = new RectangleF(chevron ? 4 : 0, 0, chevron ? 30 : i.Width, i.Height);
@@ -1385,17 +1432,25 @@ namespace TNote
             var eye = IconBtn(Ui.Eye, "서식 미리 보기 (Ctrl+Shift+M)", (s, e) => TogglePreview());
             eye.Alignment = ToolStripItemAlignment.Right;
 
+            var link = IconBtn(Ui.Link, "링크 (Ctrl+K)", (s, e) => InsertLink());
+            var clear = IconBtn(Ui.Clear, "서식 지우기", (s, e) => ClearFormatting());
+            lineFormatItems.AddRange(new ToolStripItem[] { head, list, link, table, clear });
+
             m.Items.AddRange(new ToolStripItem[] {
                 formatSpacer, head, list,
                 IconBtn(Ui.Bold, "굵게 (Ctrl+B)", (s, e) => Format(MdFormat.A.Bold, "**")),
                 IconBtn(Ui.Italic, "기울임꼴 (Ctrl+I)", (s, e) => Format(MdFormat.A.Italic, "*")),
                 IconBtn(Ui.Strike, "취소선", (s, e) => Format(MdFormat.A.Strike, "~~")),
-                IconBtn(Ui.Link, "링크 (Ctrl+K)", (s, e) => InsertLink()),
-                table,
-                IconBtn(Ui.Clear, "서식 지우기", (s, e) => ClearFormatting()),
+                link, table, clear,
                 BlockBtn(),
                 settings, eye });
         }
+
+        // With a block, only bold, italic and strikethrough apply (to each line's part); the rest work on
+        // whole lines or the caret, which a block doesn't have, so they're off while it lasts
+        readonly List<ToolStripItem> lineFormatItems = new List<ToolStripItem>();
+        bool BlockFormatting { get { return blockMode || (Cur != null && Cur.Box.BlockActive); } }
+        void UpdateFormatItems() { foreach (var i in lineFormatItems) { i.Enabled = !BlockFormatting; i.Invalidate(); } }
 
         // Toggle: while on, a plain drag selects a block (Alt+drag always does) and lines are shown unwrapped
         ToolStripMenuItem BlockBtn()
@@ -1405,7 +1460,7 @@ namespace TNote
             {
                 blockMode = b.Checked = !blockMode;
                 foreach (var d in docs) { d.Box.BlockMode = blockMode; if (!blockMode) d.Box.ClearBlock(); }
-                ApplyWrap();
+                ApplyWrap(); UpdateFormatItems();
                 if (Cur != null) Cur.Box.Focus();
             });
             return b;
@@ -1426,7 +1481,7 @@ namespace TNote
             {
                 if (keyData == (Keys.Control | Keys.B)) { Format(MdFormat.A.Bold, "**"); return true; }
                 if (keyData == (Keys.Control | Keys.I)) { Format(MdFormat.A.Italic, "*"); return true; }
-                if (keyData == (Keys.Control | Keys.K)) { InsertLink(); return true; }
+                if (keyData == (Keys.Control | Keys.K)) { if (!BlockFormatting) InsertLink(); return true; }
             }
             return base.ProcessCmdKey(ref msg, keyData);
         }
@@ -1456,6 +1511,7 @@ namespace TNote
             docs.Add(d);
             editorHost.Controls.Add(d.Box);
             d.Box.FilesDropped += OpenDropped;
+            d.Box.BlockChanged += () => { if (d == Cur) UpdateFormatItems(); };
             Switch(d);
             return d;
         }
@@ -1465,7 +1521,7 @@ namespace TNote
             active = d;
             foreach (var x in docs) x.Box.Visible = x == d && !previewOn;
             if (previewOn) ShowPreview(); else d.Box.Focus();
-            UpdateTitle(); UpdateStatus(); strip.Invalidate();
+            UpdateTitle(); UpdateStatus(); strip.Invalidate(); UpdateFormatItems();
         }
 
         // Files dropped anywhere on the window open in tabs. Drag events don't bubble to the form,
@@ -1823,6 +1879,7 @@ namespace TNote
         void Format(MdFormat.A a, string marker)
         {
             EnsureEditing();
+            if (Cur.Box.BlockActive) { Cur.Box.BlockFormat(a, marker, showMarks); Changed(); Cur.Box.Focus(); return; }
             if (showMarks) { WrapSel(marker, marker); return; }
             Cur.Box.ToggleAttr(a, P); Changed(); Cur.Box.Focus();
         }

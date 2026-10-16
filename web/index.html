@@ -100,6 +100,19 @@ textarea { width: 100%; height: 100%; resize: none; border: 0; padding: 10px 14p
   font-family: var(--mono); font-size: 14.67px; line-height: 1.4; tab-size: 4; outline: none; scrollbar-width: thin; }
 textarea:focus-visible { outline: none; }
 textarea.nowrap { white-space: pre; overflow-wrap: normal; overflow-x: auto; }
+/* Live formatting: a styled copy of the text sits under a transparent textarea. Only style and
+   color change (never glyph width), so the caret stays aligned with the glyphs. */
+.editor { position: relative; }
+.hl { position: absolute; inset: 0; margin: 0; overflow: hidden; pointer-events: none; padding: 10px 14px; color: var(--fg);
+  font-family: var(--mono); font-size: 14.67px; line-height: 1.4; tab-size: 4; white-space: pre-wrap; overflow-wrap: break-word; }
+.hl.nowrap { white-space: pre; overflow-wrap: normal; }
+.hl > div { will-change: transform; }
+.editor.live textarea { position: relative; background: transparent; color: transparent; caret-color: var(--fg); }
+.editor.live textarea::selection { color: transparent; background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.hl .b { text-shadow: .6px 0 currentColor, -.2px 0 currentColor; } /* faux bold: real bold Hangul is wider and would shift the caret */ .hl .i { font-style: italic; } .hl .s { text-decoration: line-through; }
+.hl .u { text-decoration: underline; } .hl .s.u { text-decoration: underline line-through; }
+.hl .c { background: var(--hover); border-radius: 2px; }
+.hl .d { color: color-mix(in srgb, var(--fg) 45%, var(--surface)); } .hl .a { color: var(--accent); } .hl .q { color: var(--muted); }
 
 /* Column starts measured at 1000px: 24, 104, ~304 (centre), then right-anchored 388/320/152 from the edge */
 .status { display: grid; grid-template-columns: 80px minmax(0, 200px) 1fr 68px 168px 152px; align-items: center; height: 32px; padding-left: 14px;
@@ -134,7 +147,7 @@ textarea.nowrap { white-space: pre; overflow-wrap: normal; overflow-x: auto; }
     <span class="msg" id="findMsg"></span>
     <button id="findClose" aria-label="찾기 닫기">✕</button>
   </div>
-  <div class="editor" id="editorWrap"><textarea id="ed" spellcheck="false" aria-label="문서 내용"></textarea></div>
+  <div class="editor" id="editorWrap"><pre class="hl" id="hl" aria-hidden="true"><div></div></pre><textarea id="ed" spellcheck="false" aria-label="문서 내용"></textarea></div>
   <div class="preview" id="preview" hidden></div>
   <div class="status" id="status">
     <span id="stPos"></span><span id="stChars"></span><span id="stKind">일반 텍스트</span><span id="stZoom"></span><span id="stEol"></span><span id="stEnc"></span>
@@ -162,7 +175,7 @@ const SAMPLE = '웹 메모장에 오신 것을 환영합니다.\n\n' +
 let state = store.get('np.state', null) || {
   tabs: [{ id: 1, name: null, text: SAMPLE, dirty: false, enc: 'UTF-8', eol: '\r\n' }], active: 1, nextId: 2
 };
-let settings = Object.assign({ wrap: true, statusBar: true, zoom: 1, theme: 'system' }, store.get('np.settings', {}));
+let settings = Object.assign({ wrap: true, statusBar: true, zoom: 1, theme: 'system', live: true }, store.get('np.settings', {}));
 let recent = store.get('np.recent', []);
 const handles = {}; // File System Access handles (not persisted)
 const undoStacks = {}; // per-tab edit history is native; we keep scroll/selection only
@@ -269,7 +282,7 @@ function saveEditorToTab() {
 function loadTabToEditor() {
   const t = cur(); ed.value = t.text;
   const [a, b] = t.sel || [0, 0]; ed.setSelectionRange(a, b); ed.scrollTop = t.scroll || 0;
-  renderTabs(); updateStatus();
+  renderTabs(); updateStatus(); renderLive();
   if (settings.preview) $('preview').innerHTML = renderMarkdown(ed.value); else ed.focus();
 }
 function switchTab(id) { saveEditorToTab(); state.active = id; loadTabToEditor(); persistSoon(); }
@@ -408,15 +421,19 @@ function updateStatus() {
 ed.addEventListener('input', () => {
   const t = cur(); t.text = ed.value;
   if (!t.dirty) { t.dirty = true; renderTabs(); }
-  updateStatus(); persistSoon();
+  updateStatus(); persistSoon(); renderLive();
 });
+ed.addEventListener('scroll', syncLive);
+new ResizeObserver(syncLive).observe(ed);
 ['keyup', 'click', 'select'].forEach(ev => ed.addEventListener(ev, updateStatus));
 document.addEventListener('selectionchange', () => { if (document.activeElement === ed) updateStatus(); });
 
 // ---------- view ----------
 function applySettings() {
   ed.classList.toggle('nowrap', !settings.wrap);
-  ed.style.fontSize = (15 * settings.zoom) + 'px';
+  ed.style.fontSize = $('hl').style.fontSize = (15 * settings.zoom) + 'px';
+  $('hl').classList.toggle('nowrap', !settings.wrap);
+  renderLive();
   $('status').hidden = !settings.statusBar;
   if (settings.theme === 'system') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', settings.theme);
@@ -542,6 +559,7 @@ const MENUS = () => [
     '-',
     ['상태 표시줄', '', () => { settings.statusBar = !settings.statusBar; applySettings(); }, settings.statusBar],
     ['자동 줄 바꿈', '', () => { settings.wrap = !settings.wrap; applySettings(); }, settings.wrap],
+    ['서식 표시', '', () => { settings.live = !settings.live; applySettings(); }, settings.live],
     '-',
     ['테마: 시스템 설정', '', () => { settings.theme = 'system'; applySettings(); }, settings.theme === 'system'],
     ['테마: 밝게', '', () => { settings.theme = 'light'; applySettings(); }, settings.theme === 'light'],
@@ -706,6 +724,69 @@ function clearFormatting() {
 }
 
 // Small Markdown renderer for the preview; all text is escaped, only http(s)/mailto links survive
+// ---------- live formatting (same rules as the desktop app) ----------
+// Each rule marks character ranges; later marks win for color, style flags accumulate.
+const LIVE_MAX = 300000;
+function liveMarks(src) {
+  const n = src.length, color = new Array(n).fill(''), flags = new Array(n).fill('');
+  const mark = (a, len, k) => { for (let j = a; j < a + len && j < n; j++) { if ('daq'.includes(k)) color[j] = k; else if (!flags[j].includes(k)) flags[j] += k; } };
+  const inline = (a, l) => {
+    let t = l;
+    for (const m of l.matchAll(/`[^`]+`/g)) { mark(a + m.index, m[0].length, 'c'); mark(a + m.index, 1, 'd'); mark(a + m.index + m[0].length - 1, 1, 'd'); t = t.slice(0, m.index) + ' '.repeat(m[0].length) + t.slice(m.index + m[0].length); }
+    for (const m of t.matchAll(/\[([^\]]+)\]\([^)\s]+\)/g)) { mark(a + m.index, m[0].length, 'd'); mark(a + m.index + 1, m[1].length, 'a'); mark(a + m.index + 1, m[1].length, 'u'); }
+    for (const [re, w, k] of [[/\*\*(?!\s).+?\*\*/g, 2, 'b'], [/~~(?!\s).+?~~/g, 2, 's'], [/(?<![*\w])\*(?![\s*])[^*]+?\*(?!\*)/g, 1, 'i']])
+      for (const m of t.matchAll(re)) { mark(a + m.index, m[0].length, k); mark(a + m.index, w, 'd'); mark(a + m.index + m[0].length - w, w, 'd'); }
+  };
+  const sep = /^\s*\|[\s\-:|]+\|?\s*$/, lines = src.split('\n');
+  let fence = false;
+  for (let i = 0, a = 0; i < lines.length; a += lines[i].length + 1, i++) {
+    const l = lines[i]; let m;
+    if (/^\s*```/.test(l)) { fence = !fence; mark(a, l.length, 'd'); }
+    else if (fence) mark(a, l.length, 'c');
+    else if ((m = /^(#{1,6}\s+)(.*)$/.exec(l))) { mark(a, l.length, 'b'); mark(a, m[1].length, 'd'); inline(a + m[1].length, m[2]); }
+    else if (/^\s*(---+|\*\*\*+|___+)\s*$/.test(l)) mark(a, l.length, 'd');
+    else if (l.startsWith('>')) { const p = l.length - l.replace(/^[> ]+/, '').length; mark(a, l.length, 'q'); mark(a, l.length, 'i'); mark(a, p, 'd'); inline(a + p, l.slice(p)); }
+    else if ((m = /^\s*([-*+]|\d+\.)( \[[ xX]\])? /.exec(l))) {
+      const p = m.index + m[0].indexOf(m[1]);
+      mark(a + p, m[0].length - p, 'a');
+      if (m[2] && m[2].trim() !== '[ ]') { mark(a + m[0].length, l.length - m[0].length, 's'); mark(a + m[0].length, l.length - m[0].length, 'd'); }
+      inline(a + m[0].length, l.slice(m[0].length));
+    }
+    else if (/^\s*\|/.test(l)) {
+      if (sep.test(l)) { mark(a, l.length, 'd'); continue; }
+      if (i + 1 < lines.length && sep.test(lines[i + 1])) mark(a, l.length, 'b');
+      inline(a, l);
+      for (let j = 0; j < l.length; j++) if (l[j] === '|') mark(a + j, 1, 'd');
+    }
+    else inline(a, l);
+  }
+  return { color, flags };
+}
+function liveHtml(src) {
+  const { color, flags } = liveMarks(src);
+  let out = '', run = '', cls = null;
+  const flush = () => { if (run) out += cls ? `<span class="${cls}">${esc(run)}</span>` : esc(run); run = ''; };
+  for (let j = 0; j < src.length; j++) {
+    const c = [...(color[j] + flags[j])].join(' ');
+    if (c !== cls) { flush(); cls = c; }
+    run += src[j];
+  }
+  flush();
+  return out + '\n'; // a trailing newline keeps the last empty line's height
+}
+function renderLive() {
+  const on = settings.live && ed.value.length <= LIVE_MAX;
+  $('editorWrap').classList.toggle('live', on);
+  $('hl').hidden = !on;
+  if (on) { $('hl').firstChild.innerHTML = liveHtml(ed.value); syncLive(); }
+}
+function syncLive() {
+  const hl = $('hl'); if (hl.hidden) return;
+  hl.style.paddingRight = (14 + ed.offsetWidth - ed.clientWidth) + 'px'; // leave room for the textarea's scrollbar
+  hl.style.paddingBottom = (10 + ed.offsetHeight - ed.clientHeight) + 'px';
+  hl.firstChild.style.transform = `translate(${-ed.scrollLeft}px, ${-ed.scrollTop}px)`;
+}
+
 function esc(s) { return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function inline(s) {
   const codes = [];

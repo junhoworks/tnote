@@ -17,7 +17,7 @@ namespace NotepadClone
 {
     class TabDoc
     {
-        public TextBox Box;
+        public MdEditor Box;
         public string Path;
         public Encoding Enc = new UTF8Encoding(false);
         public string Eol = "\r\n";
@@ -262,6 +262,178 @@ namespace NotepadClone
         }
     }
 
+    // Markdown spans for live formatting. Offsets index the editor text ('\n' line breaks).
+    static class MdSpans
+    {
+        public enum K { Heading, Quote, Bold, Italic, Strike, Code, Dim, Accent, Link }
+        public struct Span { public int A, N, Level; public K Kind; }
+
+        static readonly Regex Head = new Regex(@"^(#{1,6}\s+)(.*)$"), Hr = new Regex(@"^\s*(---+|\*\*\*+|___+)\s*$"),
+            Item = new Regex(@"^\s*([-*+]|\d+\.)( \[[ xX]\])? "), Sep = new Regex(@"^\s*\|[\s\-:|]+\|?\s*$"),
+            Code = new Regex(@"`[^`]+`"), Link = new Regex(@"\[([^\]]+)\]\([^)\s]+\)"),
+            Bold = new Regex(@"\*\*(?!\s).+?\*\*"), Strike = new Regex(@"~~(?!\s).+?~~"), Italic = new Regex(@"(?<![*\w])\*(?![\s*])[^*]+?\*(?!\*)");
+
+        public static List<Span> Parse(string s)
+        {
+            var r = new List<Span>();
+            var lines = s.Split('\n');
+            bool fence = false;
+            for (int i = 0, a = 0; i < lines.Length; a += lines[i].Length + 1, i++)
+            {
+                string l = lines[i]; Match m;
+                if (l.TrimStart().StartsWith("```")) { fence = !fence; Add(r, a, l.Length, K.Dim); continue; }
+                if (fence) { Add(r, a, l.Length, K.Code); continue; }
+                if ((m = Head.Match(l)).Success)
+                {
+                    Add(r, a, l.Length, K.Heading, m.Groups[1].Value.TrimEnd().Length);
+                    Add(r, a, m.Groups[1].Length, K.Dim);
+                    Inline(r, a + m.Groups[2].Index, m.Groups[2].Value);
+                }
+                else if (Hr.IsMatch(l)) Add(r, a, l.Length, K.Dim);
+                else if (l.StartsWith(">"))
+                {
+                    int n = l.Length - l.TrimStart('>', ' ').Length;
+                    Add(r, a, l.Length, K.Quote); Add(r, a, n, K.Dim);
+                    Inline(r, a + n, l.Substring(n));
+                }
+                else if ((m = Item.Match(l)).Success)
+                {
+                    int p = m.Groups[1].Index;
+                    Add(r, a + p, m.Length - p, K.Accent);
+                    if (m.Groups[2].Success && m.Groups[2].Value.Trim() != "[ ]") { Add(r, a + m.Length, l.Length - m.Length, K.Strike); Add(r, a + m.Length, l.Length - m.Length, K.Dim); }
+                    Inline(r, a + m.Length, l.Substring(m.Length));
+                }
+                else if (l.TrimStart().StartsWith("|"))
+                {
+                    if (Sep.IsMatch(l)) { Add(r, a, l.Length, K.Dim); continue; }
+                    if (i + 1 < lines.Length && Sep.IsMatch(lines[i + 1])) Add(r, a, l.Length, K.Bold);
+                    Inline(r, a, l);
+                    for (int j = 0; j < l.Length; j++) if (l[j] == '|') Add(r, a + j, 1, K.Dim);
+                }
+                else Inline(r, a, l);
+            }
+            return r;
+        }
+
+        static void Inline(List<Span> r, int a, string l)
+        {
+            var masked = l.ToCharArray(); // code spans hide their contents from the other rules
+            foreach (Match m in Code.Matches(l))
+            {
+                Add(r, a + m.Index, m.Length, K.Code); Add(r, a + m.Index, 1, K.Dim); Add(r, a + m.Index + m.Length - 1, 1, K.Dim);
+                for (int j = m.Index; j < m.Index + m.Length; j++) masked[j] = ' ';
+            }
+            string t = new string(masked);
+            foreach (Match m in Link.Matches(t)) { Add(r, a + m.Index, m.Length, K.Dim); Add(r, a + m.Groups[1].Index, m.Groups[1].Length, K.Link); }
+            Pair(r, a, t, Bold, 2, K.Bold);
+            Pair(r, a, t, Strike, 2, K.Strike);
+            Pair(r, a, t, Italic, 1, K.Italic);
+        }
+
+        static void Pair(List<Span> r, int a, string t, Regex re, int mark, K k)
+        {
+            foreach (Match m in re.Matches(t))
+            {
+                Add(r, a + m.Index, m.Length, k);
+                Add(r, a + m.Index, mark, K.Dim); Add(r, a + m.Index + m.Length - mark, mark, K.Dim);
+            }
+        }
+
+        static void Add(List<Span> r, int a, int n, K k, int level = 0) { if (n > 0) r.Add(new Span { A = a, N = n, Kind = k, Level = level }); }
+    }
+
+    // Plain-text editor that shows Markdown formatting in place. Styling goes through the
+    // Text Object Model with undo suspended, so it never dirties the document or the undo stack.
+    class MdEditor : RichTextBox
+    {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr LoadLibrary(string name);
+        [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, out IntPtr l);
+        const int EM_GETOLEINTERFACE = 0x0400 + 60, tomTrue = -1, tomSuspend = -9999995, tomResume = -9999994;
+        static readonly float[] HeadScale = { 1f, 1.7f, 1.45f, 1.25f, 1.12f, 1.05f, 1f };
+        public const int MaxStyledLength = 300000;
+
+        public bool Styling;
+        dynamic tom;
+
+        public MdEditor() { Multiline = true; DetectUrls = false; AutoWordSelection = false; }
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                var cp = base.CreateParams; // RichEdit 4.1+ supports suspending undo
+                if (LoadLibrary("msftedit.dll") != IntPtr.Zero) cp.ClassName = "RICHEDIT50W";
+                return cp;
+            }
+        }
+
+        protected override void OnHandleCreated(EventArgs e) { tom = null; base.OnHandleCreated(e); }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == (Keys.Control | Keys.V) || keyData == (Keys.Shift | Keys.Insert)) { PastePlain(); return true; }
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        public void PastePlain() { if (Clipboard.ContainsText()) SelectedText = Clipboard.GetText().Replace("\r\n", "\n"); }
+
+        dynamic Doc
+        {
+            get
+            {
+                if (tom == null && IsHandleCreated)
+                {
+                    IntPtr p; SendMessage(Handle, EM_GETOLEINTERFACE, IntPtr.Zero, out p);
+                    if (p != IntPtr.Zero) { tom = Marshal.GetObjectForIUnknown(p); Marshal.Release(p); }
+                }
+                return tom;
+            }
+        }
+
+        static int Rgb(Color c) { return c.R | c.G << 8 | c.B << 16; }
+        static Color Mix(Color a, Color b, float t) { return Color.FromArgb((int)(a.R + (b.R - a.R) * t), (int)(a.G + (b.G - a.G) * t), (int)(a.B + (b.B - a.B) * t)); }
+
+        public void Restyle(bool on, Palette P)
+        {
+            string s = Text;
+            if (s.Length > MaxStyledLength) on = false;
+            Styling = true;
+            try
+            {
+                var doc = Doc; if (doc == null) return;
+                doc.Undo(tomSuspend); doc.Freeze();
+                try
+                {
+                    float size = Font.SizeInPoints;
+                    var f = doc.Range(0, s.Length + 1).Font;
+                    f.Bold = 0; f.Italic = 0; f.StrikeThrough = 0; f.Underline = 0;
+                    f.Name = Font.Name; f.Size = size; f.ForeColor = Rgb(P.Text); f.BackColor = Rgb(P.Editor);
+                    if (!on) return;
+                    int dim = Rgb(Mix(P.Text, P.Editor, 0.55f));
+                    foreach (var sp in MdSpans.Parse(s))
+                    {
+                        f = doc.Range(sp.A, sp.A + sp.N).Font;
+                        switch (sp.Kind)
+                        {
+                            case MdSpans.K.Heading: f.Bold = tomTrue; f.Size = size * HeadScale[sp.Level]; break;
+                            case MdSpans.K.Quote: f.Italic = tomTrue; f.ForeColor = Rgb(P.Muted); break;
+                            case MdSpans.K.Bold: f.Bold = tomTrue; break;
+                            case MdSpans.K.Italic: f.Italic = tomTrue; break;
+                            case MdSpans.K.Strike: f.StrikeThrough = tomTrue; break;
+                            case MdSpans.K.Code: f.Name = "Consolas"; f.BackColor = Rgb(P.Hover); break;
+                            case MdSpans.K.Dim: f.ForeColor = dim; break;
+                            case MdSpans.K.Accent: f.ForeColor = Rgb(P.Accent); break;
+                            case MdSpans.K.Link: f.ForeColor = Rgb(P.Accent); f.Underline = 1; break;
+                        }
+                    }
+                }
+                finally { doc.Unfreeze(); doc.Undo(tomResume); }
+            }
+            catch (Exception) { tom = null; } // styling is cosmetic; never break editing over it
+            finally { Styling = false; }
+        }
+    }
+
     class MainForm : Form
     {
         readonly TabStrip strip = new TabStrip();
@@ -270,11 +442,12 @@ namespace NotepadClone
         readonly List<TabDoc> docs = new List<TabDoc>();
         readonly ToolStripMenuItem recentMenu = new ToolStripMenuItem("최근 파일");
         MenuStrip menu;
-        ToolStripMenuItem wrapItem, statusItem, darkItem, previewBtn;
+        ToolStripMenuItem wrapItem, statusItem, darkItem, previewBtn, liveItem;
         readonly List<ToolStripItem> iconItems = new List<ToolStripItem>();
         Font editorFont = new Font("Consolas", 11f);
         float zoom = 1f;
-        bool wordWrap = true, dark, previewOn;
+        bool wordWrap = true, dark, previewOn, liveFormat = true;
+        readonly Timer restyleTimer = new Timer { Interval = 150 };
         Palette P = Palette.Light;
         TabDoc active;
         readonly WebBrowser preview = new WebBrowser { Dock = DockStyle.Fill, IsWebBrowserContextMenuEnabled = false, AllowWebBrowserDrop = false, Visible = false };
@@ -306,6 +479,7 @@ namespace NotepadClone
 
             if (args.Length > 0) foreach (var a in args) OpenFile(a);
             if (docs.Count == 0) NewTab();
+            restyleTimer.Tick += (s, e) => { restyleTimer.Stop(); if (Cur != null) Restyle(Cur); };
             ApplyTheme();
             Resize += (s, e) => strip.Invalidate();
             FormClosing += (s, e) => { foreach (var d in docs.ToList()) if (!ConfirmDiscard(d)) { e.Cancel = true; return; } };
@@ -385,7 +559,7 @@ namespace NotepadClone
             edit.DropDownItems.Add(new ToolStripSeparator());
             edit.DropDownItems.Add(Item("잘라내기", Keys.Control | Keys.X, (s, e) => Cur.Box.Cut()));
             edit.DropDownItems.Add(Item("복사", Keys.Control | Keys.C, (s, e) => Cur.Box.Copy()));
-            edit.DropDownItems.Add(Item("붙여넣기", Keys.Control | Keys.V, (s, e) => Cur.Box.Paste()));
+            edit.DropDownItems.Add(Item("붙여넣기", Keys.Control | Keys.V, (s, e) => Cur.Box.PastePlain()));
             edit.DropDownItems.Add(Item("삭제", Keys.Delete, (s, e) => Cur.Box.SelectedText = ""));
             edit.DropDownItems.Add(new ToolStripSeparator());
             edit.DropDownItems.Add(Item("찾기", Keys.Control | Keys.F, (s, e) => ShowFind(false)));
@@ -410,8 +584,10 @@ namespace NotepadClone
             wrapItem = Item("자동 줄 바꿈", Keys.None, (s, e) => SetWrap(!wordWrap));
             wrapItem.Checked = wordWrap;
             darkItem = Item("어두운 테마", Keys.None, (s, e) => SetDark(!dark));
+            liveItem = Item("서식 표시", Keys.None, (s, e) => { liveFormat = !liveFormat; liveItem.Checked = liveFormat; RestyleAll(); });
+            liveItem.Checked = liveFormat;
             previewBtn = Item("서식 미리 보기", Keys.Control | Keys.Shift | Keys.M, (s, e) => TogglePreview());
-            view.DropDownItems.AddRange(new ToolStripItem[] { statusItem, wrapItem, darkItem, new ToolStripSeparator(), previewBtn });
+            view.DropDownItems.AddRange(new ToolStripItem[] { statusItem, wrapItem, darkItem, new ToolStripSeparator(), liveItem, previewBtn });
 
             foreach (var top in new[] { file, edit, view }) top.Padding = new Padding(10, 0, 10, 0);
             m.Items.AddRange(new ToolStripItem[] { file, edit, view });
@@ -515,13 +691,19 @@ namespace NotepadClone
         TabDoc NewTab()
         {
             var d = new TabDoc();
-            d.Box = new TextBox
+            d.Box = new MdEditor
             {
-                Multiline = true, Dock = DockStyle.Fill, ScrollBars = wordWrap ? ScrollBars.Vertical : ScrollBars.Both, WordWrap = wordWrap,
-                AcceptsTab = true, MaxLength = 0, HideSelection = false, BorderStyle = BorderStyle.None,
+                Dock = DockStyle.Fill, ScrollBars = wordWrap ? RichTextBoxScrollBars.Vertical : RichTextBoxScrollBars.Both, WordWrap = wordWrap,
+                AcceptsTab = true, HideSelection = false, BorderStyle = BorderStyle.None,
                 Font = ZoomedFont(), BackColor = P.Editor, ForeColor = P.Text, Visible = false
             };
-            d.Box.TextChanged += (s, e) => { if (!d.Dirty) { d.Dirty = true; strip.Invalidate(); } UpdateStatus(); };
+            d.Box.TextChanged += (s, e) =>
+            {
+                if (d.Box.Styling) return;
+                if (!d.Dirty) { d.Dirty = true; strip.Invalidate(); }
+                UpdateStatus(); restyleTimer.Stop(); restyleTimer.Start();
+            };
+            d.Box.HandleCreated += (s, e) => Restyle(d);
             d.Box.KeyUp += (s, e) => UpdateStatus();
             d.Box.MouseUp += (s, e) => UpdateStatus();
             d.Box.HandleCreated += (s, e) => SetWindowTheme(d.Box.Handle, dark ? "DarkMode_Explorer" : "Explorer", null);
@@ -560,8 +742,9 @@ namespace NotepadClone
 
             var d = Cur != null && Cur.Path == null && !Cur.Dirty && Cur.Box.TextLength == 0 ? Cur : NewTab();
             d.Path = path; d.Enc = enc; d.Eol = eol;
-            d.Box.Text = text.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "\r\n");
+            d.Box.Text = text.Replace("\r\n", "\n").Replace("\r", "\n");
             d.Box.Select(0, 0);
+            Restyle(d);
             d.Box.ClearUndo();
             d.Dirty = false;
             Switch(d);
@@ -596,7 +779,7 @@ namespace NotepadClone
                     d.Path = dlg.FileName;
                 }
             }
-            File.WriteAllText(d.Path, d.Box.Text.Replace("\r\n", d.Eol), d.Enc);
+            File.WriteAllText(d.Path, d.Box.Text.Replace("\r\n", "\n").Replace("\n", d.Eol), d.Enc);
             d.Dirty = false;
             strip.Invalidate(); UpdateTitle(); UpdateStatus();
             AddRecent(d.Path);
@@ -730,14 +913,14 @@ namespace NotepadClone
         void SetZoom(float z)
         {
             zoom = Math.Max(0.1f, Math.Min(5f, z));
-            foreach (var d in docs) d.Box.Font = ZoomedFont();
+            foreach (var d in docs) { d.Box.Font = ZoomedFont(); Restyle(d); }
             UpdateStatus();
         }
 
         void SetWrap(bool on)
         {
             wordWrap = on; wrapItem.Checked = on;
-            foreach (var d in docs) { d.Box.WordWrap = on; d.Box.ScrollBars = on ? ScrollBars.Vertical : ScrollBars.Both; }
+            foreach (var d in docs) { d.Box.WordWrap = on; d.Box.ScrollBars = on ? RichTextBoxScrollBars.Vertical : RichTextBoxScrollBars.Both; }
         }
 
         void SetDark(bool on) { dark = on; darkItem.Checked = on; ApplyTheme(); }
@@ -758,8 +941,13 @@ namespace NotepadClone
                 if (d.Box.IsHandleCreated) SetWindowTheme(d.Box.Handle, dark ? "DarkMode_Explorer" : "Explorer", null);
             }
             strip.Invalidate(); status.Invalidate(); menu.Invalidate();
+            RestyleAll();
             if (previewOn) ShowPreview();
         }
+
+        // ---------- live formatting ----------
+        void Restyle(TabDoc d) { if (d.Box.IsHandleCreated) d.Box.Restyle(liveFormat, P); }
+        void RestyleAll() { foreach (var d in docs) Restyle(d); }
 
         // ---------- formatting commands ----------
         void EnsureEditing() { if (previewOn) TogglePreview(); }
@@ -788,7 +976,7 @@ namespace NotepadClone
             start = b.SelectionStart == 0 ? 0 : v.LastIndexOf('\n', b.SelectionStart - 1) + 1;
             int stop = b.SelectionStart + b.SelectionLength;
             if (b.SelectionLength > 0 && stop > 0 && v[stop - 1] == '\n') stop--;
-            end = v.IndexOf('\r', Math.Max(stop, start));
+            end = v.IndexOf('\n', Math.Max(stop, start));
             if (end < 0) end = v.Length;
         }
 
@@ -797,8 +985,8 @@ namespace NotepadClone
             EnsureEditing();
             int a, e; SelectLines(out a, out e);
             var b = Cur.Box;
-            var lines = b.Text.Substring(a, e - a).Split(new[] { "\r\n" }, StringSplitOptions.None);
-            string outText = string.Join("\r\n", lines.Select((l, i) => f(l, i)));
+            var lines = b.Text.Substring(a, e - a).Split('\n');
+            string outText = string.Join("\n", lines.Select((l, i) => f(l, i)));
             b.Select(a, e - a); b.SelectedText = outText; b.Select(a, outText.Length); b.Focus();
         }
 
@@ -808,7 +996,7 @@ namespace NotepadClone
         {
             EnsureEditing();
             int a, e; SelectLines(out a, out e);
-            var lines = Cur.Box.Text.Substring(a, e - a).Split(new[] { "\r\n" }, StringSplitOptions.None);
+            var lines = Cur.Box.Text.Substring(a, e - a).Split('\n');
             Func<string, bool> has = l => prefix == "1. " ? Regex.IsMatch(l, @"^\s*\d+\. ") : l.TrimStart().StartsWith(prefix);
             bool all = lines.All(has);
             ReplaceLines((l, i) => all ? ListPrefix.Replace(l, "$1") : (prefix == "1. " ? (i + 1) + ". " : prefix) + ListPrefix.Replace(l, "$1"));

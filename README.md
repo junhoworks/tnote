@@ -8,7 +8,8 @@ The feature set was mapped from Notepad's `NotepadXamlUI.winmd` metadata (analyz
 
 - Tabs with a `+` button, unsaved-change dot, and caption buttons (minimize, maximize, close)
 - Menus: File, Edit, View
-- Formatting toolbar: headings, lists, bold, italic, strikethrough, link, table, clear formatting. Formatting is stored as Markdown and shown in a preview (Ctrl+Shift+M).
+- Formatting toolbar: headings, lists, bold, italic, strikethrough, link, table, clear formatting. Formatting is stored as Markdown.
+- Live formatting: headings, bold, italic, strikethrough, code, links, lists, quotes and tables are styled in the editor as you type, with Markdown markers dimmed (View > 서식 표시). A full rendered preview is still available (Ctrl+Shift+M).
 - Find and replace (match case, wrap around, replace all), go to line, time/date (F5)
 - Zoom, word wrap, status bar, light and dark themes
 - Status bar: line/column, character count, file type, zoom, line ending (CRLF/LF/CR), encoding (UTF-8, UTF-8 BOM, UTF-16, ANSI)
@@ -28,7 +29,7 @@ The app is built with the C# compiler included in Windows (.NET Framework 4.x), 
 
 ```powershell
 cd desktop
-& C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /target:winexe /codepage:65001 /nowarn:108 /out:Notepad.exe /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Core.dll Notepad.cs
+& C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /target:winexe /codepage:65001 /nowarn:108 /out:Notepad.exe /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Core.dll /r:Microsoft.CSharp.dll Notepad.cs
 .\Notepad.exe
 ```
 
@@ -43,5 +44,4 @@ The desktop app uses the Segoe UI Variable and Segoe Fluent Icons fonts that shi
 ## Not included
 
 - Copilot / AI writing features
-- Live (in-editor) rendering of formatting
 - Spell check

@@ -1,4 +1,4 @@
-﻿# Tnote
+# Tnote
 
 Tnote is a text editor modeled on Windows 11 Notepad, in two versions: a single-file web app and a WinForms desktop app.
 

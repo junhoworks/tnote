@@ -954,10 +954,63 @@ namespace NotepadClone
 
         void InsertText(string s) { EnsureEditing(); Cur.Box.SelectedText = s; Cur.Box.Focus(); }
 
+        // Inline markers can nest (~~**x**~~), so toggling one looks through every marker layer
+        // around the text instead of only the characters right next to it.
+        const string Marks = "*~`";
+
+        static List<KeyValuePair<char, int>> MarkerRuns(string t, int i, int d) // nearest run first
+        {
+            var r = new List<KeyValuePair<char, int>>();
+            while (i >= 0 && i < t.Length && Marks.IndexOf(t[i]) >= 0)
+            {
+                char c = t[i]; int n = 0;
+                while (i >= 0 && i < t.Length && t[i] == c) { n++; i += d; }
+                r.Add(new KeyValuePair<char, int>(c, n));
+            }
+            return r;
+        }
+
+        // Edit that removes `open` around t[s, e): replace [from, to) with str. False if that layer isn't there.
+        static bool UnwrapIn(string t, int s, int e, string open, out int from, out int to, out string str)
+        {
+            from = to = 0; str = null;
+            char ch = open[0]; int m = open.Length, offL = 0, offR = 0;
+            var L = MarkerRuns(t, s - 1, -1); var R = MarkerRuns(t, e, 1);
+            for (int j = 0; j < Math.Min(L.Count, R.Count); offL += L[j].Value, offR += R[j].Value, j++)
+            {
+                if (L[j].Key != ch || R[j].Key != ch) continue;
+                int k = Math.Min(L[j].Value, R[j].Value); // * is italic only as a run of 1 or 3; ** needs 2 or more
+                if (!(m == 1 ? k == 1 || k >= 3 : k >= m)) return false;
+                from = s - offL - m; to = e + offR + m; str = t.Substring(s - offL, e + offR - (s - offL));
+                return true;
+            }
+            return false;
+        }
+
         void WrapSel(string open, string close)
         {
             EnsureEditing();
             var b = Cur.Box; string v = b.Text; int a = b.SelectionStart, len = b.SelectionLength; string sel = b.SelectedText;
+            char ch = open[0]; int m = open.Length;
+            if (open == close && Marks.IndexOf(ch) >= 0 && open == new string(ch, m))
+            {
+                int from, to; string str;
+                if (UnwrapIn(v, a, a + len, open, out from, out to, out str)) // markers around the selection
+                {
+                    b.Select(from, to - from); b.SelectedText = str; b.Select(a - m, len);
+                }
+                else
+                {
+                    int P = MarkerRuns(sel, 0, 1).Sum(r => r.Value), T = MarkerRuns(sel, sel.Length - 1, -1).Sum(r => r.Value);
+                    if (sel.Length > P + T && UnwrapIn(sel, P, sel.Length - T, open, out from, out to, out str)) // markers inside the selection
+                    {
+                        b.Select(a + from, to - from); b.SelectedText = str; b.Select(a, len - 2 * m);
+                    }
+                    else { b.SelectedText = open + sel + open; b.Select(a + m, len); }
+                }
+                b.Focus();
+                return;
+            }
             if (a >= open.Length && a + len + close.Length <= v.Length && v.Substring(a - open.Length, open.Length) == open && v.Substring(a + len, close.Length) == close)
             {
                 b.Select(a - open.Length, len + open.Length + close.Length); b.SelectedText = sel; b.Select(a - open.Length, len);

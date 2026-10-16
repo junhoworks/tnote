@@ -567,7 +567,7 @@ const MENUS = () => [
   ]],
 ];
 let openMenu = null;
-function closeMenus() { if (openMenu) { openMenu.remove(); openMenu = null; } document.querySelectorAll('.menubtn').forEach(b => b.setAttribute('aria-expanded', 'false')); }
+function closeMenus() { if (openMenu) { openMenu.remove(); openMenu = null; } document.querySelectorAll('[aria-expanded="true"]').forEach(b => b.setAttribute('aria-expanded', 'false')); }
 function renderMenubar() {
   const bar = $('menubar'); bar.innerHTML = '';
   MENUS().forEach(([label], idx) => {
@@ -660,9 +660,37 @@ function insertText(s) {
 function replaceRange(a, b, s, selA, selB) {
   ed.focus(); ed.setSelectionRange(a, b); insertText(s); ed.setSelectionRange(selA, selB); updateStatus();
 }
+// Inline markers can nest (~~**x**~~), so toggling one looks through every marker layer
+// around the text instead of only the characters right next to it.
+const MARKS = '*~`';
+function markerRuns(t, i, d) { // runs of marker chars walking from i in direction d, nearest first
+  const r = [];
+  while (i >= 0 && i < t.length && MARKS.includes(t[i])) { const c = t[i]; let n = 0; while (t[i] === c) { n++; i += d; } r.push({ c, n }); }
+  return r;
+}
+function unwrapIn(t, s, e, open) { // edit that removes `open` around t[s, e), or null if that layer isn't there
+  const ch = open[0], m = open.length, L = markerRuns(t, s - 1, -1), R = markerRuns(t, e, 1);
+  let offL = 0, offR = 0;
+  for (let j = 0; j < Math.min(L.length, R.length); offL += L[j].n, offR += R[j].n, j++) {
+    if (L[j].c !== ch || R[j].c !== ch) continue;
+    const k = Math.min(L[j].n, R[j].n); // * is italic only as a run of 1 or 3; ** needs 2 or more
+    if (!(m === 1 ? k === 1 || k >= 3 : k >= m)) return null;
+    return { from: s - offL - m, to: e + offR + m, str: t.slice(s - offL, e + offR) };
+  }
+  return null;
+}
 function wrapSel(open, close = open) {
   if (settings.preview) togglePreview();
   const v = ed.value, a = ed.selectionStart, b = ed.selectionEnd, sel = v.slice(a, b);
+  const ch = open[0], m = open.length;
+  if (open === close && MARKS.includes(ch) && open === ch.repeat(m)) {
+    let u = unwrapIn(v, a, b, open); // markers around the selection
+    if (u) return replaceRange(u.from, u.to, u.str, a - m, b - m);
+    const P = markerRuns(sel, 0, 1).reduce((x, r) => x + r.n, 0), T = markerRuns(sel, sel.length - 1, -1).reduce((x, r) => x + r.n, 0);
+    if (sel.length > P + T && (u = unwrapIn(sel, P, sel.length - T, open))) // markers inside the selection
+      return replaceRange(a + u.from, a + u.to, u.str, a, b - 2 * m);
+    return replaceRange(a, b, open + sel + open, a + m, b + m);
+  }
   if (v.slice(a - open.length, a) === open && v.slice(b, b + close.length) === close) // unwrap
     return replaceRange(a - open.length, b + close.length, sel, a - open.length, b - open.length);
   if (sel.startsWith(open) && sel.endsWith(close) && sel.length >= open.length + close.length)

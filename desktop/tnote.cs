@@ -53,7 +53,7 @@ namespace TNote
         public static readonly Font Icon10 = Icons(10f), Icon8 = Icons(7.5f), Icon7 = Icons(6f);
         public const string Add = "", Close = "", ChromeClose = "", Min = "", Max = "", Restore = "",
             Bold = "", Italic = "", Strike = "", Link = "", List = "", Table = "", Chevron = "",
-            Settings = "", Eye = "", Clear = "", Page = "", Dot = "";
+            Settings = "", Block = "", Eye = "", Clear = "", Page = "", Dot = "";
 
         // Malgun Gothic has no semibold face, so it's faked: the text drawn twice, half a pixel apart
         public static void SemiBold(Graphics g, string s, Font f, Rectangle r, Color c)
@@ -895,6 +895,7 @@ namespace TNote
         int blockLine0, blockLine1, blockX0, blockX1;
         Timer blockTimer;
         public bool BlockActive { get { return blockOn; } }
+        public bool BlockMode; // the toolbar toggle: a plain drag selects a block too
 
         Point ScrollPos { get { var p = Point.Empty; SendMessage(Handle, 0x0400 + 221 /* EM_GETSCROLLPOS */, IntPtr.Zero, ref p); return p; } }
         int LineAt(int y) { return GetLineFromCharIndex(GetCharIndexFromPosition(new Point(0, Math.Max(0, Math.Min(ClientSize.Height - 1, y))))); }
@@ -902,7 +903,7 @@ namespace TNote
         bool BlockMessage(ref Message m)
         {
             const int WM_MOUSEMOVE = 0x0200, WM_LBUTTONDOWN = 0x0201, WM_LBUTTONUP = 0x0202, WM_LBUTTONDBLCLK = 0x0203, WM_KEYDOWN = 0x0100;
-            if (m.Msg == WM_LBUTTONDOWN && (ModifierKeys & Keys.Alt) != 0)
+            if (m.Msg == WM_LBUTTONDOWN && (BlockMode || (ModifierKeys & Keys.Alt) != 0))
             {
                 Focus();
                 var p = PointToClient(Cursor.Position); var sp = ScrollPos;
@@ -1090,7 +1091,7 @@ namespace TNote
         readonly List<ToolStripItem> iconItems = new List<ToolStripItem>();
         Font editorFont = new Font("Consolas", 11f);
         float zoom = 1f;
-        bool wordWrap = true, dark, previewOn, statusBar = true;
+        bool wordWrap = true, dark, previewOn, statusBar = true, blockMode;
         bool showMarks; // symbol view: edit Markdown source instead of formatted text
         readonly Timer restyleTimer = new Timer { Interval = 150 };
         Palette P = Palette.Light;
@@ -1367,7 +1368,21 @@ namespace TNote
                 IconBtn(Ui.Link, "링크 (Ctrl+K)", (s, e) => InsertLink()),
                 table,
                 IconBtn(Ui.Clear, "서식 지우기", (s, e) => ClearFormatting()),
+                BlockBtn(),
                 settings, eye });
+        }
+
+        // Toggle: while on, a plain drag selects a block (Alt+drag always does)
+        ToolStripMenuItem BlockBtn()
+        {
+            ToolStripMenuItem b = null;
+            b = IconBtn(Ui.Block, "블록 선택 (Alt+드래그)", (s, e) =>
+            {
+                blockMode = b.Checked = !blockMode;
+                foreach (var d in docs) { d.Box.BlockMode = blockMode; if (!blockMode) d.Box.ClearBlock(); }
+                if (Cur != null) Cur.Box.Focus();
+            });
+            return b;
         }
 
         void LayoutFormatBar()
@@ -1396,7 +1411,7 @@ namespace TNote
             var d = new TabDoc();
             d.Box = new MdEditor
             {
-                Dock = DockStyle.Fill, ScrollBars = wordWrap ? RichTextBoxScrollBars.Vertical : RichTextBoxScrollBars.Both, WordWrap = wordWrap,
+                Dock = DockStyle.Fill, ScrollBars = wordWrap ? RichTextBoxScrollBars.Vertical : RichTextBoxScrollBars.Both, WordWrap = wordWrap, BlockMode = blockMode,
                 AcceptsTab = true, HideSelection = false, BorderStyle = BorderStyle.None,
                 Font = editorFont, BackColor = P.Editor, ForeColor = P.Text, Visible = false, Formatted = !showMarks
             };

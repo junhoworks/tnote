@@ -217,7 +217,9 @@ namespace NotepadClone
             using (var pen = new Pen(P.Border)) g.DrawLine(pen, 0, 0, Width, 0);
             int w = Width;
             // column starts measured at 1000px: 24, 104, 304*, 612, 680, 848 (right-anchored from zoom on)
-            int[] x = { 24, 104, Math.Max(200, w / 2 - 196), w - 388, w - 320, w - 152 };
+            // the position column grows with its text ("줄 1234, 열 567" doesn't fit 80px in Malgun Gothic)
+            int chars = 24 + Math.Max(80, TextRenderer.MeasureText(g, Pos, Ui.Small).Width + 24);
+            int[] x = { 24, chars, Math.Max(chars + 96, w / 2 - 196), w - 388, w - 320, w - 152 };
             string[] t = { Pos, Chars, Kind, Zoom, Eol, Enc };
             using (var pen = new Pen(P.Border))
                 for (int i = 0; i < 6; i++)

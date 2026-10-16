@@ -880,7 +880,7 @@ namespace NotepadClone
         readonly List<ToolStripItem> iconItems = new List<ToolStripItem>();
         Font editorFont = new Font("Consolas", 11f);
         float zoom = 1f;
-        bool wordWrap = true, dark, previewOn;
+        bool wordWrap = true, dark, previewOn, statusBar = true;
         bool showMarks; // symbol view: edit Markdown source instead of formatted text
         readonly Timer restyleTimer = new Timer { Interval = 150 };
         Palette P = Palette.Light;
@@ -888,6 +888,38 @@ namespace NotepadClone
         readonly WebBrowser preview = new WebBrowser { Dock = DockStyle.Fill, IsWebBrowserContextMenuEnabled = false, AllowWebBrowserDrop = false, Visible = false };
         static readonly string SettingsPath = System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "NotepadClone", "recent.txt");
+        static readonly string ViewSettingsPath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(SettingsPath), "settings.txt");
+
+        // ---------- view settings (font, wrap, theme...) kept across runs as key=value lines ----------
+        void LoadSettings()
+        {
+            try
+            {
+                if (!File.Exists(ViewSettingsPath)) return;
+                var kv = File.ReadAllLines(ViewSettingsPath).Select(l => l.Split(new[] { '=' }, 2)).Where(p => p.Length == 2).ToDictionary(p => p[0].Trim(), p => p[1].Trim());
+                string v; bool b; float f;
+                if (kv.TryGetValue("font", out v)) { var font = (Font)System.ComponentModel.TypeDescriptor.GetConverter(typeof(Font)).ConvertFromInvariantString(v); if (font != null) editorFont = font; }
+                if (kv.TryGetValue("wrap", out v) && bool.TryParse(v, out b)) wordWrap = b;
+                if (kv.TryGetValue("dark", out v) && bool.TryParse(v, out b)) dark = b;
+                if (kv.TryGetValue("statusBar", out v) && bool.TryParse(v, out b)) statusBar = b;
+                if (kv.TryGetValue("markdownSymbols", out v) && bool.TryParse(v, out b)) showMarks = b;
+                if (kv.TryGetValue("zoom", out v) && float.TryParse(v, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out f)) zoom = Math.Max(0.1f, Math.Min(5f, f));
+            }
+            catch (Exception) { } // a broken settings file just means defaults
+        }
+
+        void SaveSettings()
+        {
+            try
+            {
+                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(ViewSettingsPath));
+                File.WriteAllLines(ViewSettingsPath, new[] {
+                    "font=" + System.ComponentModel.TypeDescriptor.GetConverter(typeof(Font)).ConvertToInvariantString(editorFont),
+                    "wrap=" + wordWrap, "dark=" + dark, "statusBar=" + statusBar, "markdownSymbols=" + showMarks,
+                    "zoom=" + zoom.ToString(System.Globalization.CultureInfo.InvariantCulture) });
+            }
+            catch (IOException) { }
+        }
         List<string> recent = new List<string>();
         string lastFind = "";
         bool matchCase;
@@ -903,7 +935,9 @@ namespace NotepadClone
             Padding = new Padding(1, 0, 1, 1); // edge strips the form hit-tests as resize borders
 
             strip.Docs = () => docs; strip.Active = () => active; strip.Select = Switch; strip.CloseDoc = CloseTab; strip.NewTab = () => NewTab();
+            LoadSettings();
             menu = BuildMenu();
+            darkItem.Checked = dark; marksItem.Checked = showMarks; statusItem.Checked = status.Visible = statusBar;
             MainMenuStrip = menu;
             editorHost.Controls.Add(preview);
             Controls.Add(editorHost);
@@ -1024,8 +1058,7 @@ namespace NotepadClone
             zm.DropDownItems.Add(Item("축소", Keys.Control | Keys.OemMinus, (s, e) => SetZoom(zoom - 0.1f)));
             zm.DropDownItems.Add(Item("기본 확대/축소 복원", Keys.Control | Keys.D0, (s, e) => SetZoom(1f)));
             view.DropDownItems.Add(zm);
-            statusItem = Item("상태 표시줄", Keys.None, (s, e) => { status.Visible = !status.Visible; statusItem.Checked = status.Visible; });
-            statusItem.Checked = true;
+            statusItem = Item("상태 표시줄", Keys.None, (s, e) => { statusBar = !statusBar; status.Visible = statusItem.Checked = statusBar; SaveSettings(); });
             wrapItem = Item("자동 줄 바꿈", Keys.None, (s, e) => SetWrap(!wordWrap));
             wrapItem.Checked = wordWrap;
             darkItem = Item("어두운 테마", Keys.None, (s, e) => SetDark(!dark));
@@ -1433,6 +1466,7 @@ namespace NotepadClone
                 if (dlg.ShowDialog(this) == DialogResult.OK)
                 {
                     editorFont = dlg.Font;
+                    SaveSettings();
                     // Setting Font resets all character formatting, so carry it across as Markdown
                     foreach (var d in docs)
                     {
@@ -1455,16 +1489,17 @@ namespace NotepadClone
         {
             zoom = Math.Max(0.1f, Math.Min(5f, z));
             foreach (var d in docs) ApplyZoom(d);
-            UpdateStatus();
+            UpdateStatus(); SaveSettings();
         }
 
         void SetWrap(bool on)
         {
             wordWrap = on; wrapItem.Checked = on;
             foreach (var d in docs) { d.Box.WordWrap = on; d.Box.ScrollBars = on ? RichTextBoxScrollBars.Vertical : RichTextBoxScrollBars.Both; }
+            SaveSettings();
         }
 
-        void SetDark(bool on) { dark = on; darkItem.Checked = on; ApplyTheme(); }
+        void SetDark(bool on) { dark = on; darkItem.Checked = on; ApplyTheme(); SaveSettings(); }
 
         [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)] static extern int SetWindowTheme(IntPtr h, string app, string id);
 
@@ -1504,7 +1539,7 @@ namespace NotepadClone
                 d.Box.Formatted = !on;
                 d.Dirty = dirty;
             }
-            showMarks = on; marksItem.Checked = on;
+            showMarks = on; marksItem.Checked = on; SaveSettings();
             RestyleAll(); UpdateStatus();
         }
 

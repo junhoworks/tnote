@@ -14,7 +14,7 @@ The feature set was mapped from Notepad's `NotepadXamlUI.winmd` metadata (analyz
 - Find and replace (match case, wrap around, replace all), go to line, time/date (F5)
 - Zoom, word wrap, status bar, light and dark themes
 - Status bar: line/column, character count, file type, zoom, line ending (CRLF/LF/CR), encoding (UTF-8, UTF-8 BOM, UTF-16, ANSI)
-- Recent files
+- Recent files, and view settings (font, word wrap, theme, status bar, Markdown symbols, zoom) kept across runs in `%AppData%NotepadClone`
 - Drag files onto the window to open them in tabs
 
 ## Web (`web/index.html`)

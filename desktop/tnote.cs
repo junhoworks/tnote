@@ -66,52 +66,23 @@ namespace TNote
             g.TextRenderingHint = hint;
         }
 
-        // The T series mark: a rounded square with a bold T, and a pencil over its lower right corner with a
-        // clear gap around it (MakeIcon.cs draws tnote.ico the same way). Drawn on its own bitmap so the gap is transparent.
-        public static Bitmap MarkBitmap(int s, Color c)
+        // The app icon at a given size, from the exe's tnote.ico. Its entries are PNG, which Icon can't decode
+        // but the shell can, so it's loaded through PrivateExtractIcons.
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int PrivateExtractIcons(string file, int index, int cx, int cy, IntPtr[] icons, int[] ids, int n, int flags);
+        [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr h);
+        static readonly Dictionary<int, Bitmap> appIcons = new Dictionary<int, Bitmap>();
+        public static Bitmap AppIcon(int size)
         {
-            var bmp = new Bitmap(s, s, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            using (var g = Graphics.FromImage(bmp))
-            using (var b = new SolidBrush(c))
-            using (var clear = new SolidBrush(Color.Transparent))
+            Bitmap b;
+            if (appIcons.TryGetValue(size, out b)) return b;
+            var h = new IntPtr[1]; var id = new int[1];
+            if (PrivateExtractIcons(Application.ExecutablePath, 0, size, size, h, id, 1, 0) > 0 && h[0] != IntPtr.Zero)
             {
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                float w = s * 0.085f, d = s * 0.34f;
-                var box = new RectangleF(s * 0.04f + w / 2, s * 0.04f + w / 2, s * 0.92f - w, s * 0.92f - w);
-                using (var path = new GraphicsPath())
-                using (var pen = new Pen(c, w))
-                {
-                    path.AddArc(box.X, box.Y, d, d, 180, 90); path.AddArc(box.Right - d, box.Y, d, d, 270, 90);
-                    path.AddArc(box.Right - d, box.Bottom - d, d, d, 0, 90); path.AddArc(box.X, box.Bottom - d, d, d, 90, 90);
-                    path.CloseFigure();
-                    g.DrawPath(pen, path);
-                }
-                float cx = s * 0.47f, bar = s * 0.44f, stem = s * 0.14f, top = s * 0.21f, bottom = s * 0.7f;
-                g.FillRectangle(b, cx - bar / 2, top, bar, s * 0.13f);
-                g.FillRectangle(b, cx - stem / 2, top, stem, bottom - top);
-
-                // pencil over the lower right corner: drawn pointing left from its tip, then turned so the tip points into the box
-                float hw = s * 0.08f, tip = s * 0.13f, len = s * 0.49f, cap = s * 0.08f, gap = s * 0.025f;
-                var m = new Matrix(); m.Translate(s * 0.6f, s * 0.6f); m.Rotate(45);
-                using (var outline = new GraphicsPath())
-                using (var cut = new Pen(Color.Transparent, s * 0.08f) { LineJoin = LineJoin.Round })
-                {
-                    outline.AddPolygon(new[] { new PointF(0, 0), new PointF(tip, -hw), new PointF(len, -hw), new PointF(len, hw), new PointF(tip, hw) });
-                    outline.Transform(m);
-                    g.CompositingMode = CompositingMode.SourceCopy; // knock out the box under and around the pencil
-                    g.DrawPath(cut, outline); g.FillPath(clear, outline);
-                    g.CompositingMode = CompositingMode.SourceOver;
-                }
-                using (var parts = new GraphicsPath())
-                {
-                    parts.AddPolygon(new[] { new PointF(0, 0), new PointF(tip, -hw), new PointF(tip, hw) });
-                    parts.AddRectangle(new RectangleF(tip + gap, -hw, len - cap - tip - 2 * gap, 2 * hw));
-                    parts.AddRectangle(new RectangleF(len - cap, -hw, cap, 2 * hw));
-                    parts.Transform(m);
-                    g.FillPath(b, parts);
-                }
+                using (var ic = Icon.FromHandle(h[0])) b = ic.ToBitmap();
+                DestroyIcon(h[0]);
             }
-            return bmp;
+            appIcons[size] = b;
+            return b;
         }
 
         public static void Glyph(Graphics g, string s, Font f, Rectangle r, Color c)
@@ -168,7 +139,7 @@ namespace TNote
             g.Clear(P.Title);
             var docs = Docs(); var active = Active();
             // app glyph
-            using (var mark = Ui.MarkBitmap(30, P.Accent)) g.DrawImage(mark, 10, 6);
+            var mark = Ui.AppIcon(32); if (mark != null) g.DrawImage(mark, 9, 5, 32, 32);
             for (int i = 0; i < docs.Count; i++)
             {
                 var r = TabRect(i); var d = docs[i]; bool on = d == active, hov = r.Contains(mouse);

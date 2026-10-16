@@ -3,7 +3,7 @@ param([string]$Out = "$env:TEMP\clone_np.png", [switch]$NoBuild, [string]$File)
 $dir = $PSScriptRoot
 if (-not $NoBuild) {
   New-Item -ItemType Directory -Force "$env:TEMP\npbuild" | Out-Null
-  & C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /target:winexe /codepage:65001 /nowarn:108 /out:"$env:TEMP\npbuild\Notepad.exe" /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Core.dll /r:Microsoft.CSharp.dll "$dir\Notepad.cs"
+  & C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /target:winexe /codepage:65001 /nowarn:108 /out:"$env:TEMP\npbuild\Notepad.exe" /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Core.dll /r:Microsoft.CSharp.dll /win32icon:"$dir\Notepad.ico" "$dir\Notepad.cs"
   if ($LASTEXITCODE -ne 0) { exit 1 }; Copy-Item "$env:TEMP\npbuild\Notepad.exe" "$dir\Notepad.exe" -Force
 }
 Add-Type -AssemblyName System.Drawing

@@ -932,6 +932,7 @@ namespace NotepadClone
             KeyPreview = true;
             DoubleBuffered = true;
             Font = Ui.Body;
+            try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch (Exception) { } // taskbar: the exe's Notepad.ico
             Padding = new Padding(1, 0, 1, 1); // edge strips the form hit-tests as resize borders
 
             strip.Docs = () => docs; strip.Active = () => active; strip.Select = Switch; strip.CloseDoc = CloseTab; strip.NewTab = () => NewTab();

@@ -1110,7 +1110,10 @@ document.addEventListener('keydown', e => {
     if (c && !e.shiftKey && (k === 'b' || k === 'i')) { e.preventDefault(); blkWrap(k === 'b' ? '**' : '*'); return; }
     if (c && k === 'k') { e.preventDefault(); return; }
     if (c && (k === 'c' || k === 'x')) {
-      e.preventDefault(); navigator.clipboard.writeText(blkText()).catch(() => {}); if (k === 'x') blkDelete(); return;
+      // through the copy and cut events (the handlers above), which work on file:// pages where the async clipboard API may not
+      e.preventDefault(); ed.focus();
+      if (!document.execCommand(k === 'x' ? 'cut' : 'copy')) { navigator.clipboard.writeText(blkText()).catch(() => {}); if (k === 'x') blkDelete(); }
+      return;
     }
     if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); blkDelete(); return; }
     blkClear();

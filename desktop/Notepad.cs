@@ -50,6 +50,7 @@ namespace NotepadClone
         // One UI font: Malgun Gothic covers Hangul, digits and Latin, so mixed text keeps one size and baseline
         public static readonly Font Body = new Font("Malgun Gothic", 10f);
         public static readonly Font Small = new Font("Malgun Gothic", 9f);
+        public static readonly Font BodyBold = new Font(Body, FontStyle.Bold); // the current tab's file name
         public static Font Icons(float size) { return new Font("Segoe Fluent Icons", size); }
         public static readonly Font Icon10 = Icons(10f), Icon8 = Icons(7.5f), Icon7 = Icons(6f);
         public const string Add = "", Close = "", ChromeClose = "", Min = "", Max = "", Restore = "",
@@ -122,7 +123,7 @@ namespace NotepadClone
                 else if (i > 0 && docs[i - 1] != active)
                     using (var pen = new Pen(Color.FromArgb(60, P.Muted))) g.DrawLine(pen, r.X, r.Y + 10, r.X, r.Bottom - 10);
                 var tr = new Rectangle(r.X + 12, r.Y, r.Width - 52, r.Height);
-                TextRenderer.DrawText(g, d.Title, Ui.Body, tr, P.Text, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+                TextRenderer.DrawText(g, d.Title, on ? Ui.BodyBold : Ui.Body, tr, P.Text, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
                 var cr = CloseRect(i); bool chov = cr.Contains(mouse);
                 if (chov) using (var path = Ui.Round(cr, 4)) using (var b = new SolidBrush(P.Pressed)) g.FillPath(b, path);
                 if (d.Dirty && !hov)

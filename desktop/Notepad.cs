@@ -271,7 +271,7 @@ namespace NotepadClone
         static readonly Regex Head = new Regex(@"^(#{1,6}\s+)(.*)$"), Hr = new Regex(@"^\s*(---+|\*\*\*+|___+)\s*$"),
             Item = new Regex(@"^\s*([-*+]|\d+\.)( \[[ xX]\])? "), Sep = new Regex(@"^\s*\|[\s\-:|]+\|?\s*$"),
             Code = new Regex(@"`[^`]+`"), Link = new Regex(@"\[([^\]]+)\]\([^)\s]+\)"),
-            Bold = new Regex(@"\*\*(?!\s).+?\*\*"), Strike = new Regex(@"~~(?!\s).+?~~"), Italic = new Regex(@"(?<![*\w])\*(?![\s*])[^*]+?\*(?!\*)");
+            BoldItalic = new Regex(@"\*\*\*(?![\s*]).+?\*\*\*"), Bold = new Regex(@"\*\*(?!\s).+?\*\*"), Strike = new Regex(@"~~(?!\s).+?~~"), Italic = new Regex(@"(?<![*\w])\*(?![\s*])[^*]+?\*(?!\*)");
 
         public static List<Span> Parse(string s)
         {
@@ -325,6 +325,12 @@ namespace NotepadClone
             }
             string t = new string(masked);
             foreach (Match m in Link.Matches(t)) { Add(r, a + m.Index, m.Length, K.Dim); Add(r, a + m.Groups[1].Index, m.Groups[1].Length, K.Link); }
+            foreach (Match m in BoldItalic.Matches(t)) // ***x*** is bold and italic; hide it from the ** and * rules
+            {
+                Add(r, a + m.Index, m.Length, K.Bold); Add(r, a + m.Index, m.Length, K.Italic);
+                Add(r, a + m.Index, 3, K.Dim); Add(r, a + m.Index + m.Length - 3, 3, K.Dim);
+                t = t.Substring(0, m.Index) + new string(' ', m.Length) + t.Substring(m.Index + m.Length);
+            }
             Pair(r, a, t, Bold, 2, K.Bold);
             Pair(r, a, t, Strike, 2, K.Strike);
             Pair(r, a, t, Italic, 1, K.Italic);
@@ -1017,7 +1023,14 @@ namespace NotepadClone
         void WrapSel(string open, string close)
         {
             EnsureEditing();
-            var b = Cur.Box; string v = b.Text; int a = b.SelectionStart, len = b.SelectionLength; string sel = b.SelectedText;
+            var b = Cur.Box; string v = b.Text; int a = b.SelectionStart, len = b.SelectionLength;
+            if (open == close) // inline markers can't span a line break, so leave edge whitespace (a selected line's \n) outside
+            {
+                while (len > 0 && char.IsWhiteSpace(v[a + len - 1])) len--;
+                while (len > 0 && char.IsWhiteSpace(v[a])) { a++; len--; }
+                b.Select(a, len);
+            }
+            string sel = b.SelectedText;
             char ch = open[0]; int m = open.Length;
             if (open == close && Marks.IndexOf(ch) >= 0 && open == new string(ch, m))
             {

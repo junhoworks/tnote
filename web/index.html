@@ -681,7 +681,13 @@ function unwrapIn(t, s, e, open) { // edit that removes `open` around t[s, e), o
 }
 function wrapSel(open, close = open) {
   if (settings.preview) togglePreview();
-  const v = ed.value, a = ed.selectionStart, b = ed.selectionEnd, sel = v.slice(a, b);
+  const v = ed.value;
+  let a = ed.selectionStart, b = ed.selectionEnd;
+  if (open === close) { // inline markers can't span a line break, so leave edge whitespace (a selected line's \n) outside
+    while (b > a && /\s/.test(v[b - 1])) b--;
+    while (b > a && /\s/.test(v[a])) a++;
+  }
+  const sel = v.slice(a, b);
   const ch = open[0], m = open.length;
   if (open === close && MARKS.includes(ch) && open === ch.repeat(m)) {
     let u = unwrapIn(v, a, b, open); // markers around the selection
@@ -764,6 +770,11 @@ function liveMarks(src) {
     let t = l;
     for (const m of l.matchAll(/`[^`]+`/g)) { mark(a + m.index, m[0].length, 'c'); mark(a + m.index, 1, 'd'); mark(a + m.index + m[0].length - 1, 1, 'd'); t = t.slice(0, m.index) + ' '.repeat(m[0].length) + t.slice(m.index + m[0].length); }
     for (const m of t.matchAll(/\[([^\]]+)\]\([^)\s]+\)/g)) { mark(a + m.index, m[0].length, 'd'); mark(a + m.index + 1, m[1].length, 'a'); mark(a + m.index + 1, m[1].length, 'u'); }
+    for (const m of t.matchAll(/\*\*\*(?![\s*]).+?\*\*\*/g)) { // ***x*** is bold and italic; hide it from the ** and * rules
+      mark(a + m.index, m[0].length, 'b'); mark(a + m.index, m[0].length, 'i');
+      mark(a + m.index, 3, 'd'); mark(a + m.index + m[0].length - 3, 3, 'd');
+      t = t.slice(0, m.index) + ' '.repeat(m[0].length) + t.slice(m.index + m[0].length);
+    }
     for (const [re, w, k] of [[/\*\*(?!\s).+?\*\*/g, 2, 'b'], [/~~(?!\s).+?~~/g, 2, 's'], [/(?<![*\w])\*(?![\s*])[^*]+?\*(?!\*)/g, 1, 'i']])
       for (const m of t.matchAll(re)) { mark(a + m.index, m[0].length, k); mark(a + m.index, w, 'd'); mark(a + m.index + m[0].length - w, w, 'd'); }
   };

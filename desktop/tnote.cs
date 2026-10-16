@@ -892,6 +892,7 @@ namespace TNote
         // Its corners are visual lines and document x (client x + horizontal scroll), so scrolling keeps it in place.
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, ref Point l);
         bool blockOn, blockDrag, blockQuiet, blockUnwrapped;
+        List<int[]> blockFixed; // after formatting: the parts by character, since bold text is wider and would shift a pixel range
         int blockLine0, blockLine1, blockX0, blockX1;
         Timer blockTimer;
         public bool BlockActive { get { return blockOn; } }
@@ -924,7 +925,7 @@ namespace TNote
                 blockQuiet = true; Select(ci, 0); blockQuiet = false;
                 blockLine0 = blockLine1 = LineAt(p.Y);
                 blockX0 = blockX1 = Math.Max(0, Math.Min(ClientSize.Width - 1, p.X)) + sp.X;
-                blockOn = blockDrag = true; Capture = true; if (BlockChanged != null) BlockChanged();
+                blockFixed = null; blockOn = blockDrag = true; Capture = true; if (BlockChanged != null) BlockChanged();
                 if (blockTimer == null) { blockTimer = new Timer { Interval = 40 }; blockTimer.Tick += (s, e) => BlockAutoScroll(); }
                 blockTimer.Start();
                 Invalidate();
@@ -986,6 +987,7 @@ namespace TNote
         {
             if (!blockOn) return;
             blockOn = blockDrag = false;
+            blockFixed = null;
             if (BlockChanged != null) BlockChanged();
             if (blockTimer != null) blockTimer.Stop();
             if (blockUnwrapped)
@@ -1042,6 +1044,7 @@ namespace TNote
         // Per visual line: start, end, line
         List<int[]> BlockSegments(int from, int to)
         {
+            if (blockFixed != null) return blockFixed.Where(sg => sg[2] >= from && sg[2] <= to).ToList();
             var list = new List<int[]>();
             int sx = ScrollPos.X, xl = Math.Min(blockX0, blockX1) - sx, xr = Math.Max(blockX0, blockX1) - sx;
             for (int line = from; line <= to; line++)
@@ -1084,7 +1087,7 @@ namespace TNote
         // or markers around each part in the symbol view (the text moves, so the block ends)
         public void BlockFormat(MdFormat.A a, string marker, bool marks)
         {
-            var segs = BlockSegments().Where(sg => sg[1] > sg[0]).ToList();
+            var parts = BlockSegments(); var segs = parts.Where(sg => sg[1] > sg[0]).ToList();
             var doc = Doc; if (segs.Count == 0 || doc == null) return;
             blockQuiet = true;
             bool grouped = false;
@@ -1122,7 +1125,7 @@ namespace TNote
                 }
             }
             finally { if (grouped) doc.EndEditCollection(); blockQuiet = false; }
-            if (marks) ClearBlock(); else Invalidate();
+            if (marks) ClearBlock(); else { blockFixed = parts; Invalidate(); }
         }
 
         public void BlockDelete()

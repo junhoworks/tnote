@@ -1389,7 +1389,13 @@ namespace TNote
             i.Paint += (s, e) =>
             {
                 var g = e.Graphics; g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
-                using (var b = new SolidBrush(i.Enabled ? P.Text : P.Muted))
+                bool red = i.Checked && i.Tag as string == "red"; // the block toggle stands out while on
+                if (red)
+                {
+                    g.SmoothingMode = SmoothingMode.AntiAlias;
+                    using (var path = Ui.Round(new Rectangle(0, 3, i.Width, i.Height - 6), 4)) using (var bg = new SolidBrush(dark ? Color.FromArgb(0x4A, 0x24, 0x20) : Color.FromArgb(0xFB, 0xE3, 0xE0))) g.FillPath(bg, path);
+                }
+                using (var b = new SolidBrush(red ? (dark ? Color.FromArgb(0xFF, 0x6B, 0x5E) : Color.FromArgb(0xC4, 0x2B, 0x1C)) : i.Enabled ? P.Text : P.Muted))
                 using (var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
                 {
                     var main = new RectangleF(chevron ? 4 : 0, 0, chevron ? 30 : i.Width, i.Height);
@@ -1463,6 +1469,7 @@ namespace TNote
                 ApplyWrap(); UpdateFormatItems();
                 if (Cur != null) Cur.Box.Focus();
             });
+            b.Tag = "red";
             return b;
         }
 

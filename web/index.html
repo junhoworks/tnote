@@ -5,18 +5,18 @@
 :root {
   --title: #d1dbec; --chrome: #f1f4f9; --surface: #f9f9f9; --bg: #f1f4f9;
   --fg: #1a1a1a; --muted: #5f5f5f; --line: #e4e7ec; --accent: #005fb8;
-  --hover: #e3e7ee; --pressed: #d8dde6; --menu: #f9f9f9; --menu-line: #e0e0e0; --danger: #c42b1c;
+  --hover: #e3e7ee; --pressed: #d8dde6; --menu: #f9f9f9; --menu-line: #e0e0e0; --danger: #c42b1c; --block: #c42b1c; --block-bg: #fbe3e0;
   --ui: "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
   --mono: Consolas, "Cascadia Mono", "D2Coding", ui-monospace, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --title: #202020; --chrome: #2c2c2c; --surface: #272727; --bg: #2c2c2c;
   --fg: #ffffff; --muted: #c5c5c5; --line: #1d1d1d; --accent: #60cdff;
-  --hover: #383838; --pressed: #333333; --menu: #2c2c2c; --menu-line: #3a3a3a; --danger: #ff99a4; color-scheme: dark } }
+  --hover: #383838; --pressed: #333333; --menu: #2c2c2c; --menu-line: #3a3a3a; --danger: #ff99a4; --block: #ff6b5e; --block-bg: #4a2420; color-scheme: dark } }
 :root[data-theme="dark"] {
   --title: #202020; --chrome: #2c2c2c; --surface: #272727; --bg: #2c2c2c;
   --fg: #ffffff; --muted: #c5c5c5; --line: #1d1d1d; --accent: #60cdff;
-  --hover: #383838; --pressed: #333333; --menu: #2c2c2c; --menu-line: #3a3a3a; --danger: #ff99a4; color-scheme: dark }
+  --hover: #383838; --pressed: #333333; --menu: #2c2c2c; --menu-line: #3a3a3a; --danger: #ff99a4; --block: #ff6b5e; --block-bg: #4a2420; color-scheme: dark }
 html, body { height: 100%; margin: 0; }
 [hidden] { display: none !important; }
 *, *::before, *::after { box-sizing: border-box; }
@@ -75,6 +75,7 @@ svg.chev { width: 10px; height: 10px; }
 .fbtn { min-width: 34px; height: 30px; padding: 0 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .fbtn:hover, .fbtn[aria-pressed="true"], .fbtn[aria-expanded="true"] { background: var(--hover); }
 .fbtn:disabled { opacity: .35; pointer-events: none; }
+.fbtn.blockbtn[aria-pressed="true"] { color: var(--block); background: var(--block-bg); }
 .fbtn b { font-weight: 700; font-size: 15px; }
 .fmt .menu { min-width: 180px; }
 .fmt.right .menu { left: auto; right: 0; }
@@ -804,7 +805,7 @@ function buildFormatBar() {
 }
 // Toggle: while on, a plain drag selects a block (Alt+drag always does) and lines are shown unwrapped
 function blockBtn() {
-  const b = fbtn(ICON.block, '블록 선택 (Alt+드래그)', () => { blockMode = !blockMode; b.setAttribute('aria-pressed', String(blockMode)); blkClear(); applySettings(); updateFormatItems(); ed.focus(); });
+  const b = fbtn(ICON.block, '블록 선택 (Alt+드래그)', () => { blockMode = !blockMode; b.setAttribute('aria-pressed', String(blockMode)); blkClear(); applySettings(); updateFormatItems(); ed.focus(); }, 'blockbtn');
   b.setAttribute('aria-pressed', 'false'); return b;
 }
 function buildRightBar() {

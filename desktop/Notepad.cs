@@ -55,6 +55,31 @@ namespace NotepadClone
             Bold = "", Italic = "", Strike = "", Link = "", List = "", Table = "", Chevron = "",
             Settings = "", Eye = "", Clear = "", Page = "", Dot = "";
 
+        public static readonly Font SmallKo = new Font("Malgun Gothic", 9f);
+
+        // Segoe UI has no Hangul, and GDI's fallback draws it larger on a different baseline, so digits
+        // next to Korean look small and low. Draw Hangul runs in Malgun Gothic and the rest in the Latin
+        // font, on one shared baseline, vertically centered in r.
+        public static void DrawMixed(Graphics g, string s, Font latin, Font ko, Rectangle r, Color c)
+        {
+            const TextFormatFlags flags = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine;
+            Func<Font, float> ascent = f => f.FontFamily.GetCellAscent(f.Style) * f.Size / f.FontFamily.GetEmHeight(f.Style) * g.DpiY / 72f;
+            float height = latin.FontFamily.GetLineSpacing(latin.Style) * latin.Size / latin.FontFamily.GetEmHeight(latin.Style) * g.DpiY / 72f;
+            float baseline = r.Top + (r.Height - height) / 2f + ascent(latin);
+            int x = r.Left;
+            for (int i = 0; i < s.Length && x < r.Right; )
+            {
+                bool hangul = IsHangul(s[i]);
+                int j = i; while (j < s.Length && IsHangul(s[j]) == hangul) j++;
+                string run = s.Substring(i, j - i); var f = hangul ? ko : latin;
+                TextRenderer.DrawText(g, run, f, new Point(x, (int)Math.Round(baseline - ascent(f))), c, flags);
+                x += TextRenderer.MeasureText(g, run, f, Size.Empty, flags).Width;
+                i = j;
+            }
+        }
+
+        static bool IsHangul(char ch) { return (ch >= '가' && ch <= '힣') || (ch >= 'ᄀ' && ch <= 'ᇿ') || (ch >= '㄰' && ch <= '㆏'); }
+
         public static void Glyph(Graphics g, string s, Font f, Rectangle r, Color c)
         {
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
@@ -211,8 +236,7 @@ namespace NotepadClone
                 for (int i = 0; i < 6; i++)
                 {
                     if (i > 0) g.DrawLine(pen, x[i] - 10, 9, x[i] - 10, 23);
-                    TextRenderer.DrawText(g, t[i], Ui.Small, new Rectangle(x[i], 0, (i < 5 ? x[i + 1] : w) - x[i] - 14, Height), P.Text,
-                        TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+                    Ui.DrawMixed(g, t[i], Ui.Small, Ui.SmallKo, new Rectangle(x[i], 0, (i < 5 ? x[i + 1] : w) - x[i] - 14, Height), P.Text);
                 }
         }
     }

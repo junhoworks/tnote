@@ -53,8 +53,8 @@ static class MakeIcon
         using (var clear = new SolidBrush(Color.Transparent))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            float w = s * 0.085f, d = s * 0.26f;
-            var box = new RectangleF(s * 0.04f + w / 2, s * 0.04f + w / 2, s * 0.66f - w, s * 0.66f - w);
+            float w = s * 0.085f, d = s * 0.34f;
+            var box = new RectangleF(s * 0.04f + w / 2, s * 0.04f + w / 2, s * 0.92f - w, s * 0.92f - w);
             using (var path = new GraphicsPath())
             using (var pen = new Pen(c, w))
             {
@@ -63,15 +63,15 @@ static class MakeIcon
                 path.CloseFigure();
                 g.DrawPath(pen, path);
             }
-            float cx = s * 0.37f, bar = s * 0.32f, stem = s * 0.1f, top = s * 0.2f, bottom = s * 0.55f;
-            g.FillRectangle(b, cx - bar / 2, top, bar, s * 0.095f);
+            float cx = s * 0.47f, bar = s * 0.44f, stem = s * 0.14f, top = s * 0.21f, bottom = s * 0.7f;
+            g.FillRectangle(b, cx - bar / 2, top, bar, s * 0.13f);
             g.FillRectangle(b, cx - stem / 2, top, stem, bottom - top);
 
-            // pencil: drawn pointing left from its tip, then turned to point down-left
-            float hw = s * 0.11f, tip = s * 0.19f, len = s * 0.66f, cap = s * 0.12f, gap = s * 0.03f;
-            var m = new Matrix(); m.Translate(s * 0.36f, s * 0.97f); m.Rotate(-45);
+            // pencil over the lower right corner: drawn pointing left from its tip, then turned so the tip points into the box
+            float hw = s * 0.08f, tip = s * 0.13f, len = s * 0.49f, cap = s * 0.08f, gap = s * 0.025f;
+            var m = new Matrix(); m.Translate(s * 0.6f, s * 0.6f); m.Rotate(45);
             using (var outline = new GraphicsPath())
-            using (var cut = new Pen(Color.Transparent, s * 0.09f) { LineJoin = LineJoin.Round })
+            using (var cut = new Pen(Color.Transparent, s * 0.08f) { LineJoin = LineJoin.Round })
             {
                 outline.AddPolygon(new[] { new PointF(0, 0), new PointF(tip, -hw), new PointF(len, -hw), new PointF(len, hw), new PointF(tip, hw) });
                 outline.Transform(m);

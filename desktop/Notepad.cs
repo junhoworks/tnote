@@ -582,7 +582,11 @@ namespace NotepadClone
             edit.DropDownItems.Add(Item("잘라내기", Keys.Control | Keys.X, (s, e) => Cur.Box.Cut()));
             edit.DropDownItems.Add(Item("복사", Keys.Control | Keys.C, (s, e) => Cur.Box.Copy()));
             edit.DropDownItems.Add(Item("붙여넣기", Keys.Control | Keys.V, (s, e) => Cur.Box.PastePlain()));
-            edit.DropDownItems.Add(Item("삭제", Keys.Delete, (s, e) => Cur.Box.SelectedText = ""));
+            // Shown as Del but not bound: a bound Delete shortcut reaches the menu before the RichTextBox,
+            // so the key would only ever clear a selection and never delete the next character.
+            var del = Item("삭제", Keys.None, (s, e) => Cur.Box.SelectedText = "");
+            del.ShortcutKeyDisplayString = "Del";
+            edit.DropDownItems.Add(del);
             edit.DropDownItems.Add(new ToolStripSeparator());
             edit.DropDownItems.Add(Item("찾기", Keys.Control | Keys.F, (s, e) => ShowFind(false)));
             edit.DropDownItems.Add(Item("다음 찾기", Keys.F3, (s, e) => FindNext(lastFind, true)));

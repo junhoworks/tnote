@@ -495,6 +495,7 @@ namespace NotepadClone
     {
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr LoadLibrary(string name);
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, out IntPtr l);
+        [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, IntPtr l);
         const int EM_GETOLEINTERFACE = 0x0400 + 60, tomTrue = -1, tomSuspend = -9999995, tomResume = -9999994,
             tomAutoColor = -9999997, tomCharFormat = 13, tomParagraph = 4;
         const string CodeFont = "Consolas";
@@ -525,7 +526,38 @@ namespace NotepadClone
                 return;
             }
             base.WndProc(ref m);
+            // Not while the IME composes: querying the control then would split the Hangul syllable
+            if (m.Msg == 0x000F /* WM_PAINT */ && !Composing && SelectionLength > 0) PaintParagraphGaps();
         }
+
+        // RichEdit paints the selection over the space between paragraphs; Notepad's D2D RichEdit doesn't.
+        // The gap holds no text, so repainting it with the background restores Notepad's look.
+        string paintText; // cached text for painting; reset on every change
+        protected override void OnTextChanged(EventArgs e) { paintText = null; base.OnTextChanged(e); }
+        void PaintParagraphGaps()
+        {
+            if (paintText == null) paintText = Text;
+            string s = paintText;
+            int zn, zd; SendMessage(Handle, 0x0400 + 224 /* EM_GETZOOM */, out zn, out zd);
+            using (var g = CreateGraphics())
+            using (var br = new SolidBrush(BackColor))
+            {
+                float zoom = zn > 0 && zd > 0 ? (float)zn / zd : 1f;
+                int gap = (int)Math.Round(BaseSize * GapScale / 72f * g.DpiY * zoom);
+                if (gap <= 0) return;
+                int line = GetLineFromCharIndex(GetCharIndexFromPosition(new Point(0, 0)));
+                for (; ; line++)
+                {
+                    int next = GetFirstCharIndexFromLine(line + 1);
+                    if (next <= 0 || next > s.Length) break;
+                    if (s[next - 1] != '\n') continue; // a wrapped line, not a new paragraph
+                    int y = GetPositionFromCharIndex(next).Y;
+                    if (y - gap > ClientSize.Height) break;
+                    g.FillRectangle(br, 0, y - gap, ClientSize.Width, gap);
+                }
+            }
+        }
+        [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, out int w, out int l);
 
         protected override CreateParams CreateParams
         {
@@ -541,7 +573,24 @@ namespace NotepadClone
         {
             tom = null; base.OnHandleCreated(e);
             RevokeDragDrop(Handle); DragAcceptFiles(Handle, true);
+            // Advanced typography draws italic overhangs that the selection highlight would otherwise clip
+            SendMessage(Handle, 0x0400 + 202 /* EM_SETTYPOGRAPHYOPTIONS */, (IntPtr)1 /* TO_ADVANCEDTYPOGRAPHY */, (IntPtr)1);
+            if (base.Text.Length == 0) Quietly(LayoutAll); // a new tab starts with Notepad's line layout
         }
+
+        // Line layout like Notepad: a fixed line height plus space between paragraphs. RichEdit doesn't
+        // paint the paragraph space when selecting, which leaves Notepad's gap between highlighted lines.
+        const int tomLineSpaceSingle = 0, tomLineSpaceExactly = 4;
+        const float GapScale = 0.27f;
+        public void SetLineLayout(dynamic para, bool heading)
+        {
+            if (heading) para.SetLineSpacing(tomLineSpaceSingle, 1f); // big heading text must not be clipped
+            else para.SetLineSpacing(tomLineSpaceExactly, BaseSize * 1.5f);
+            para.SpaceAfter = BaseSize * GapScale;
+        }
+
+        // Body layout for the whole text; headings are then set per line
+        void LayoutAll(dynamic doc) { SetLineLayout(doc.Range(0, int.MaxValue).Para, false); }
 
         [DllImport("imm32.dll")] static extern IntPtr ImmGetContext(IntPtr h);
         [DllImport("imm32.dll")] static extern bool ImmReleaseContext(IntPtr h, IntPtr c);
@@ -610,6 +659,7 @@ namespace NotepadClone
                     var f = doc.Range(0, s.Length + 1).Font;
                     f.Bold = 0; f.Italic = 0; f.StrikeThrough = 0; f.Underline = 0;
                     f.Name = Font.Name; f.Size = size; f.ForeColor = Rgb(P.Text); f.BackColor = tomAutoColor;
+                    LayoutAll(doc);
                     if (!on) return;
                     int dim = Rgb(Mix(P.Text, P.Editor, 0.55f));
                     foreach (var sp in MdSpans.Parse(s))
@@ -617,7 +667,7 @@ namespace NotepadClone
                         f = doc.Range(sp.A, sp.A + sp.N).Font;
                         switch (sp.Kind)
                         {
-                            case MdSpans.K.Heading: f.Bold = tomTrue; f.Size = size * MdFormat.HeadScale[sp.Level]; break;
+                            case MdSpans.K.Heading: f.Bold = tomTrue; f.Size = size * MdFormat.HeadScale[sp.Level]; SetLineLayout(doc.Range(sp.A, sp.A + sp.N).Para, true); break;
                             case MdSpans.K.Quote: f.Italic = tomTrue; f.ForeColor = Rgb(P.Muted); break;
                             case MdSpans.K.Bold: f.Bold = tomTrue; break;
                             case MdSpans.K.Italic: f.Italic = tomTrue; break;
@@ -667,6 +717,7 @@ namespace NotepadClone
             {
                 int n = text.Length;
                 ResetFormat(doc.Range(0, n + 1).Font, P);
+                LayoutAll(doc);
                 foreach (var fm in fmts)
                 {
                     int a = Math.Min(fm.Start, n), b = Math.Min(fm.Start + fm.Length, n + 1); // n + 1: the final paragraph mark
@@ -676,7 +727,7 @@ namespace NotepadClone
                     if ((fm.Attr & MdFormat.A.Bold) != 0 || fm.Heading > 0) f.Bold = tomTrue;
                     if ((fm.Attr & MdFormat.A.Italic) != 0) f.Italic = tomTrue;
                     if ((fm.Attr & MdFormat.A.Strike) != 0) f.StrikeThrough = tomTrue;
-                    if (fm.Heading > 0) f.Size = BaseSize * MdFormat.HeadScale[fm.Heading];
+                    if (fm.Heading > 0) { f.Size = BaseSize * MdFormat.HeadScale[fm.Heading]; SetLineLayout(r.Para, true); }
                     if (fm.Url != null) { f.ForeColor = Rgb(P.Accent); f.Underline = 1; links.Add(new KeyValuePair<dynamic, string>(r, fm.Url)); }
                 }
             });
@@ -740,8 +791,9 @@ namespace NotepadClone
         public void SetHeading(int level)
         {
             var doc = Doc; if (doc == null) return;
-            var f = SelectedLines(doc).Font;
+            dynamic r = SelectedLines(doc); var f = r.Font;
             f.Size = BaseSize * MdFormat.HeadScale[level]; f.Bold = level > 0 ? tomTrue : 0;
+            SetLineLayout(r.Para, level > 0);
         }
 
         public void ToggleCodeBlock(Palette P)
@@ -768,10 +820,12 @@ namespace NotepadClone
             dynamic r = all ? doc.Range(0, int.MaxValue) : doc.Range((int)doc.Selection.Start, (int)doc.Selection.End);
             int a = r.Start, b = r.End;
             ResetFormat(r.Font, P);
+            if (all) LayoutAll(doc);
             if (!all) // headings and code blocks belong to whole lines
             {
                 r.Expand(tomParagraph);
                 r.Font.Size = BaseSize; r.Font.BackColor = tomAutoColor; r.Font.Name = Font.Name;
+                SetLineLayout(r.Para, false);
             }
             links.RemoveAll(l => (int)l.Key.Start < b && (int)l.Key.End > a);
         }
@@ -807,7 +861,7 @@ namespace NotepadClone
                 dynamic r = doc.Range((int)doc.Selection.Start, (int)doc.Selection.Start); r.Expand(tomParagraph);
                 if (((string)r.Text).Trim().Length == 0 && Math.Abs((float)r.Font.Size - BaseSize) > 0.01f)
                 {
-                    r.Font.Size = BaseSize; r.Font.Bold = 0;
+                    r.Font.Size = BaseSize; r.Font.Bold = 0; SetLineLayout(r.Para, false);
                     doc.Selection.Font.Size = BaseSize; doc.Selection.Font.Bold = 0;
                 }
             }));
@@ -818,7 +872,7 @@ namespace NotepadClone
     {
         readonly TabStrip strip = new TabStrip();
         readonly StatusPanel status = new StatusPanel();
-        readonly Panel editorHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(14, 10, 0, 0) };
+        readonly Panel editorHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(14, 16, 0, 0) };
         readonly List<TabDoc> docs = new List<TabDoc>();
         readonly ToolStripMenuItem recentMenu = new ToolStripMenuItem("최근 파일");
         MenuStrip menu;

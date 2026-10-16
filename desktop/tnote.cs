@@ -539,25 +539,27 @@ namespace TNote
                 if (FilesDropped != null) FilesDropped(files);
                 return;
             }
+            if (BlockMessage(ref m)) return;
             base.WndProc(ref m);
             // Not while the IME composes: querying the control then would split the Hangul syllable
-            if (m.Msg == 0x000F /* WM_PAINT */ && !Composing && SelectionLength > 0) PaintParagraphGaps();
+            if (m.Msg == 0x000F /* WM_PAINT */ && !Composing)
+            {
+                if (SelectionLength > 0) PaintParagraphGaps();
+                if (blockOn) PaintBlock();
+            }
         }
 
         // RichEdit paints the selection over the space between paragraphs; Notepad's D2D RichEdit doesn't.
         // The gap holds no text, so repainting it with the background restores Notepad's look.
         string paintText; // cached text for painting; reset on every change
-        protected override void OnTextChanged(EventArgs e) { paintText = null; base.OnTextChanged(e); }
+        protected override void OnTextChanged(EventArgs e) { paintText = null; if (!blockQuiet) ClearBlock(); base.OnTextChanged(e); }
         void PaintParagraphGaps()
         {
-            if (paintText == null) paintText = Text;
-            string s = paintText;
-            int zn, zd; SendMessage(Handle, 0x0400 + 224 /* EM_GETZOOM */, out zn, out zd);
+            string s = PaintText;
             using (var g = CreateGraphics())
             using (var br = new SolidBrush(BackColor))
             {
-                float zoom = zn > 0 && zd > 0 ? (float)zn / zd : 1f;
-                int gap = (int)Math.Round(BaseSize * GapScale / 72f * g.DpiY * zoom);
+                int gap = GapPx(g);
                 if (gap <= 0) return;
                 int line = GetLineFromCharIndex(GetCharIndexFromPosition(new Point(0, 0)));
                 for (; ; line++)
@@ -572,6 +574,9 @@ namespace TNote
             }
         }
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, out int w, out int l);
+        string PaintText { get { if (paintText == null) paintText = Text; return paintText; } }
+        float Zoom { get { int zn, zd; SendMessage(Handle, 0x0400 + 224 /* EM_GETZOOM */, out zn, out zd); return zn > 0 && zd > 0 ? (float)zn / zd : 1f; } }
+        int GapPx(Graphics g) { return (int)Math.Round(BaseSize * GapScale / 72f * g.DpiY * Zoom); }
 
         protected override CreateParams CreateParams
         {
@@ -634,6 +639,7 @@ namespace TNote
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
+            if (blockOn && (keyData == Keys.Delete || keyData == Keys.Back)) { BlockDelete(); return true; }
             if (keyData == (Keys.Control | Keys.V) || keyData == (Keys.Shift | Keys.Insert)) { PastePlain(); return true; }
             if (base.ProcessCmdKey(ref msg, keyData)) return true; // menu shortcuts (e.g. Ctrl+B) come first
             return Array.IndexOf(NativeFormatKeys, keyData) >= 0;
@@ -880,6 +886,196 @@ namespace TNote
                 }
             }));
         }
+
+        // ---------- block (column) selection: Alt+drag ----------
+        // RichEdit keeps a single selection, so the block is held here and painted over the text.
+        // Its corners are visual lines and document x (client x + horizontal scroll), so scrolling keeps it in place.
+        [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, ref Point l);
+        bool blockOn, blockDrag, blockQuiet;
+        int blockLine0, blockLine1, blockX0, blockX1;
+        Timer blockTimer;
+        public bool BlockActive { get { return blockOn; } }
+
+        Point ScrollPos { get { var p = Point.Empty; SendMessage(Handle, 0x0400 + 221 /* EM_GETSCROLLPOS */, IntPtr.Zero, ref p); return p; } }
+        int LineAt(int y) { return GetLineFromCharIndex(GetCharIndexFromPosition(new Point(0, Math.Max(0, Math.Min(ClientSize.Height - 1, y))))); }
+
+        bool BlockMessage(ref Message m)
+        {
+            const int WM_MOUSEMOVE = 0x0200, WM_LBUTTONDOWN = 0x0201, WM_LBUTTONUP = 0x0202, WM_LBUTTONDBLCLK = 0x0203, WM_KEYDOWN = 0x0100;
+            if (m.Msg == WM_LBUTTONDOWN && (ModifierKeys & Keys.Alt) != 0)
+            {
+                Focus();
+                var p = PointToClient(Cursor.Position); var sp = ScrollPos;
+                blockQuiet = true; Select(GetCharIndexFromPosition(p), 0); blockQuiet = false;
+                blockLine0 = blockLine1 = LineAt(p.Y);
+                blockX0 = blockX1 = Math.Max(0, Math.Min(ClientSize.Width - 1, p.X)) + sp.X;
+                blockOn = blockDrag = true; Capture = true;
+                if (blockTimer == null) { blockTimer = new Timer { Interval = 40 }; blockTimer.Tick += (s, e) => BlockAutoScroll(); }
+                blockTimer.Start();
+                Invalidate();
+                return true;
+            }
+            if (blockDrag)
+            {
+                if (m.Msg == WM_MOUSEMOVE) { UpdateBlock(); return true; }
+                if (m.Msg == WM_LBUTTONUP || m.Msg == 0x001F /* WM_CANCELMODE */ || m.Msg == 0x0215 /* WM_CAPTURECHANGED */)
+                {
+                    blockDrag = false; blockTimer.Stop(); if (m.Msg == WM_LBUTTONUP) Capture = false;
+                    return m.Msg == WM_LBUTTONUP;
+                }
+            }
+            else if (blockOn)
+            {
+                if (m.Msg == WM_LBUTTONDOWN || m.Msg == WM_LBUTTONDBLCLK) ClearBlock();
+                else if (m.Msg == WM_KEYDOWN)
+                {
+                    var k = (Keys)(int)m.WParam;
+                    if (k != Keys.ShiftKey && k != Keys.ControlKey && k != Keys.Menu) ClearBlock();
+                }
+            }
+            if ((m.Msg == 0x0115 /* WM_VSCROLL */ || m.Msg == 0x0114 /* WM_HSCROLL */ || m.Msg == 0x020A /* WM_MOUSEWHEEL */) && blockOn) BeginInvoke((Action)Invalidate);
+            return false;
+        }
+
+        void UpdateBlock()
+        {
+            var p = PointToClient(Cursor.Position);
+            int line = LineAt(p.Y), x = Math.Max(0, Math.Min(ClientSize.Width - 1, p.X)) + ScrollPos.X;
+            if (line == blockLine1 && x == blockX1) return;
+            blockLine1 = line; blockX1 = x;
+            Invalidate();
+        }
+
+        // Dragging past an edge keeps scrolling, so the block can reach beyond the visible text
+        void BlockAutoScroll()
+        {
+            var p = PointToClient(Cursor.Position);
+            if (p.Y < 0) SendMessage(Handle, 0x0115, IntPtr.Zero /* SB_LINEUP */, IntPtr.Zero);
+            else if (p.Y >= ClientSize.Height) SendMessage(Handle, 0x0115, (IntPtr)1 /* SB_LINEDOWN */, IntPtr.Zero);
+            if (!WordWrap)
+            {
+                if (p.X < 0) SendMessage(Handle, 0x0114, IntPtr.Zero /* SB_LINELEFT */, IntPtr.Zero);
+                else if (p.X >= ClientSize.Width) SendMessage(Handle, 0x0114, (IntPtr)1 /* SB_LINERIGHT */, IntPtr.Zero);
+            }
+            UpdateBlock();
+        }
+
+        public void ClearBlock()
+        {
+            if (!blockOn) return;
+            blockOn = blockDrag = false;
+            if (blockTimer != null) blockTimer.Stop();
+            Invalidate();
+        }
+
+        protected override void OnSelectionChanged(EventArgs e)
+        {
+            if (blockOn && !blockQuiet && SelectionLength > 0) ClearBlock(); // e.g. Select All
+            base.OnSelectionChanged(e);
+        }
+
+        protected override void OnResize(EventArgs e) { if (WordWrap) ClearBlock(); base.OnResize(e); }
+
+        // Character range [a, b) of a visual line, without its paragraph mark
+        void LineRange(int line, out int a, out int b)
+        {
+            string s = PaintText;
+            a = Math.Min(GetFirstCharIndexFromLine(line), s.Length);
+            int n = GetFirstCharIndexFromLine(line + 1);
+            b = n <= a ? s.Length : Math.Min(n, s.Length);
+            if (b > a && s[b - 1] == '\n') b--;
+        }
+
+        // Left edge x of the character boundary i on the line [a, b] at height y
+        int XOf(int i, int b, int y)
+        {
+            if (i < b) return GetPositionFromCharIndex(i).X;
+            var p = GetPositionFromCharIndex(i);
+            if (i == 0 || Math.Abs(p.Y - y) < 2) return p.X;
+            // the end of a wrapped line: the next character is already on the next line
+            string s = PaintText;
+            var q = GetPositionFromCharIndex(i - 1);
+            return q.X + (int)Math.Round(TextRenderer.MeasureText(s.Substring(i - 1, 1), Font, Size.Empty, TextFormatFlags.NoPadding).Width * Zoom);
+        }
+
+        // Character boundary nearest to client x on the line [a, b]
+        int IndexAtX(int a, int b, int x)
+        {
+            if (a == b) return a;
+            int y = GetPositionFromCharIndex(a).Y, lo = a, hi = b;
+            while (lo < hi) // first character whose middle is right of x
+            {
+                int mid = (lo + hi) / 2;
+                if ((XOf(mid, b, y) + XOf(mid + 1, b, y)) / 2 >= x) hi = mid; else lo = mid + 1;
+            }
+            return lo;
+        }
+
+        // Per visual line: start, end, line
+        List<int[]> BlockSegments(int from, int to)
+        {
+            var list = new List<int[]>();
+            int sx = ScrollPos.X, xl = Math.Min(blockX0, blockX1) - sx, xr = Math.Max(blockX0, blockX1) - sx;
+            for (int line = from; line <= to; line++)
+            {
+                int a, b; LineRange(line, out a, out b);
+                list.Add(new[] { IndexAtX(a, b, xl), IndexAtX(a, b, xr), line });
+            }
+            return list;
+        }
+        List<int[]> BlockSegments() { return BlockSegments(Math.Min(blockLine0, blockLine1), Math.Max(blockLine0, blockLine1)); }
+
+        void PaintBlock()
+        {
+            int l0 = Math.Min(blockLine0, blockLine1), l1 = Math.Max(blockLine0, blockLine1);
+            int first = Math.Max(l0, LineAt(0)), last = Math.Min(l1, LineAt(ClientSize.Height - 1));
+            if (first > last) return;
+            string s = PaintText;
+            using (var g = CreateGraphics())
+            using (var br = new SolidBrush(Color.FromArgb(110, SystemColors.Highlight)))
+            {
+                int gap = GapPx(g), pitch = (int)Math.Round(BaseSize * 1.5f / 72f * g.DpiY * Zoom);
+                foreach (var seg in BlockSegments(first, last))
+                {
+                    int a, b; LineRange(seg[2], out a, out b);
+                    int y = GetPositionFromCharIndex(a).Y, h = pitch;
+                    int next = GetFirstCharIndexFromLine(seg[2] + 1);
+                    if (next > 0 && next <= s.Length) h = GetPositionFromCharIndex(next).Y - y - (s[next - 1] == '\n' ? gap : 0);
+                    int x0 = XOf(seg[0], b, y), x1 = XOf(seg[1], b, y);
+                    g.FillRectangle(br, x0, y, Math.Max(x1 - x0, 1), h); // an empty part still shows as a thin caret
+                }
+            }
+        }
+
+        public string BlockText() { return string.Join("\r\n", BlockSegments().Select(sg => PaintText.Substring(sg[0], sg[1] - sg[0]))); }
+
+        public void BlockCopy() { Clipboard.SetText(BlockText()); }
+        public void BlockCut() { BlockCopy(); BlockDelete(); }
+
+        public void BlockDelete()
+        {
+            var segs = BlockSegments();
+            blockQuiet = true;
+            try
+            {
+                var doc = Doc;
+                bool grouped = false;
+                if (doc != null) try { doc.BeginEditCollection(); grouped = true; } catch (Exception) { } // one undo step (RichEdit 8+)
+                try
+                {
+                    for (int i = segs.Count - 1; i >= 0; i--) // bottom up, so earlier offsets stay valid
+                    {
+                        if (segs[i][1] <= segs[i][0]) continue;
+                        if (doc != null) doc.Range(segs[i][0], segs[i][1]).Text = "";
+                        else { Select(segs[i][0], segs[i][1] - segs[i][0]); SelectedText = ""; }
+                    }
+                }
+                finally { if (grouped) doc.EndEditCollection(); }
+                Select(segs[0][0], 0);
+            }
+            finally { blockQuiet = false; }
+            ClearBlock();
+        }
     }
 
     class MainForm : Form
@@ -1062,12 +1258,12 @@ namespace TNote
             var edit = new ToolStripMenuItem("편집");
             edit.DropDownItems.Add(Item("실행 취소", Keys.Control | Keys.Z, (s, e) => Cur.Box.Undo()));
             edit.DropDownItems.Add(new ToolStripSeparator());
-            edit.DropDownItems.Add(Item("잘라내기", Keys.Control | Keys.X, (s, e) => Cur.Box.Cut()));
-            edit.DropDownItems.Add(Item("복사", Keys.Control | Keys.C, (s, e) => Cur.Box.Copy()));
+            edit.DropDownItems.Add(Item("잘라내기", Keys.Control | Keys.X, (s, e) => { if (Cur.Box.BlockActive) Cur.Box.BlockCut(); else Cur.Box.Cut(); }));
+            edit.DropDownItems.Add(Item("복사", Keys.Control | Keys.C, (s, e) => { if (Cur.Box.BlockActive) Cur.Box.BlockCopy(); else Cur.Box.Copy(); }));
             edit.DropDownItems.Add(Item("붙여넣기", Keys.Control | Keys.V, (s, e) => Cur.Box.PastePlain()));
             // Shown as Del but not bound: a bound Delete shortcut reaches the menu before the RichTextBox,
             // so the key would only ever clear a selection and never delete the next character.
-            var del = Item("삭제", Keys.None, (s, e) => Cur.Box.SelectedText = "");
+            var del = Item("삭제", Keys.None, (s, e) => { if (Cur.Box.BlockActive) Cur.Box.BlockDelete(); else Cur.Box.SelectedText = ""; });
             del.ShortcutKeyDisplayString = "Del";
             edit.DropDownItems.Add(del);
             edit.DropDownItems.Add(new ToolStripSeparator());

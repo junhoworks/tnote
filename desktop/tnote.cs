@@ -1372,7 +1372,7 @@ namespace TNote
                 settings, eye });
         }
 
-        // Toggle: while on, a plain drag selects a block (Alt+drag always does)
+        // Toggle: while on, a plain drag selects a block (Alt+drag always does) and lines are shown unwrapped
         ToolStripMenuItem BlockBtn()
         {
             ToolStripMenuItem b = null;
@@ -1380,6 +1380,7 @@ namespace TNote
             {
                 blockMode = b.Checked = !blockMode;
                 foreach (var d in docs) { d.Box.BlockMode = blockMode; if (!blockMode) d.Box.ClearBlock(); }
+                ApplyWrap();
                 if (Cur != null) Cur.Box.Focus();
             });
             return b;
@@ -1411,7 +1412,7 @@ namespace TNote
             var d = new TabDoc();
             d.Box = new MdEditor
             {
-                Dock = DockStyle.Fill, ScrollBars = wordWrap ? RichTextBoxScrollBars.Vertical : RichTextBoxScrollBars.Both, WordWrap = wordWrap, BlockMode = blockMode,
+                Dock = DockStyle.Fill, ScrollBars = ShownWrap ? RichTextBoxScrollBars.Vertical : RichTextBoxScrollBars.Both, WordWrap = ShownWrap, BlockMode = blockMode,
                 AcceptsTab = true, HideSelection = false, BorderStyle = BorderStyle.None,
                 Font = editorFont, BackColor = P.Editor, ForeColor = P.Text, Visible = false, Formatted = !showMarks
             };
@@ -1736,8 +1737,14 @@ namespace TNote
         void SetWrap(bool on)
         {
             wordWrap = on; wrapItem.Checked = on;
-            foreach (var d in docs) { d.Box.WordWrap = on; d.Box.ScrollBars = on ? RichTextBoxScrollBars.Vertical : RichTextBoxScrollBars.Both; }
-            SaveSettings();
+            ApplyWrap(); SaveSettings();
+        }
+
+        // Block selection mode shows lines unwrapped; the saved setting comes back when it ends
+        bool ShownWrap { get { return wordWrap && !blockMode; } }
+        void ApplyWrap()
+        {
+            foreach (var d in docs) { d.Box.WordWrap = ShownWrap; d.Box.ScrollBars = ShownWrap ? RichTextBoxScrollBars.Vertical : RichTextBoxScrollBars.Both; }
         }
 
         void SetDark(bool on) { dark = on; darkItem.Checked = on; ApplyTheme(); SaveSettings(); }

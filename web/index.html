@@ -176,6 +176,8 @@ let state = store.get('np.state', null) || {
   tabs: [{ id: 1, name: null, text: SAMPLE, dirty: false, enc: 'UTF-8', eol: '\r\n' }], active: 1, nextId: 2
 };
 let settings = Object.assign({ wrap: true, statusBar: true, zoom: 1, theme: 'system', live: true }, store.get('np.settings', {}));
+let blockMode = false; // block selection toggle: lines are shown unwrapped while it is on
+const shownWrap = () => settings.wrap && !blockMode;
 let recent = store.get('np.recent', []);
 const handles = {}; // File System Access handles (not persisted)
 const undoStacks = {}; // per-tab edit history is native; we keep scroll/selection only
@@ -443,8 +445,8 @@ function blkClear() {
 }
 function blkMirror() {
   bOv.style.right = (ed.offsetWidth - ed.clientWidth) + 'px'; bOv.style.bottom = (ed.offsetHeight - ed.clientHeight) + 'px';
-  bMir.className = 'hl' + (settings.wrap ? '' : ' nowrap');
-  bMir.style.fontSize = ed.style.fontSize; bMir.style.width = settings.wrap ? ed.clientWidth + 'px' : 'auto';
+  bMir.className = 'hl' + (shownWrap() ? '' : ' nowrap');
+  bMir.style.fontSize = ed.style.fontSize; bMir.style.width = shownWrap() ? ed.clientWidth + 'px' : 'auto';
   bMir.textContent = ''; blk.lines = [];
   const f = document.createDocumentFragment(); let o = 0;
   for (const l of ed.value.split('\n')) {
@@ -516,7 +518,7 @@ function blkDelete() { // one edit over the whole span, so a single undo restore
 ed.addEventListener('mousedown', e => {
   if (e.button !== 0) return;
   blkClear();
-  if (!e.altKey && !blk.mode) return;
+  if (!e.altKey && !blockMode) return;
   e.preventDefault(); blkMirror(); ed.focus();
   blk.a = blk.b = blkPt(e.clientX, e.clientY); blk.drag = true; blk.px = e.clientX; blk.py = e.clientY;
   const s = blkSegs(blk.a.x, blk.a.y, blk.a.x, blk.a.y), o = s.length ? s[0].a : ed.value.length;
@@ -524,7 +526,7 @@ ed.addEventListener('mousedown', e => {
   blk.timer = setInterval(() => { // auto-scroll while the pointer is outside the editor
     const r = ed.getBoundingClientRect(), lh = parseFloat(getComputedStyle(ed).lineHeight), t = ed.scrollTop, l = ed.scrollLeft;
     if (blk.py < r.top) ed.scrollTop -= lh; else if (blk.py > r.bottom) ed.scrollTop += lh;
-    if (!settings.wrap) { if (blk.px < r.left) ed.scrollLeft -= lh; else if (blk.px > r.right) ed.scrollLeft += lh; }
+    if (!shownWrap()) { if (blk.px < r.left) ed.scrollLeft -= lh; else if (blk.px > r.right) ed.scrollLeft += lh; }
     if (ed.scrollTop !== t || ed.scrollLeft !== l) blkMove();
   }, 40);
 });
@@ -533,13 +535,13 @@ document.addEventListener('mouseup', () => { if (blk.drag) { blk.drag = false; c
 ed.addEventListener('copy', e => { if (blk.on && blk.segs.length) { e.clipboardData.setData('text/plain', blkText()); e.preventDefault(); } });
 ed.addEventListener('cut', e => { if (blk.on && blk.segs.length) { e.clipboardData.setData('text/plain', blkText()); e.preventDefault(); blkDelete(); } });
 ed.addEventListener('scroll', blkSync);
-new ResizeObserver(() => { if (settings.wrap) blkClear(); }).observe(ed);
+new ResizeObserver(() => { if (shownWrap()) blkClear(); }).observe(ed);
 
 // ---------- view ----------
 function applySettings() {
-  ed.classList.toggle('nowrap', !settings.wrap);
+  ed.classList.toggle('nowrap', !shownWrap());
   ed.style.fontSize = $('hl').style.fontSize = (15 * settings.zoom) + 'px';
-  $('hl').classList.toggle('nowrap', !settings.wrap);
+  $('hl').classList.toggle('nowrap', !shownWrap());
   renderLive();
   $('status').hidden = !settings.statusBar;
   if (settings.theme === 'system') document.documentElement.removeAttribute('data-theme');
@@ -755,9 +757,9 @@ function buildFormatBar() {
   );
   return f;
 }
-// Toggle: while on, a plain drag selects a block (Alt+drag always does)
+// Toggle: while on, a plain drag selects a block (Alt+drag always does) and lines are shown unwrapped
 function blockBtn() {
-  const b = fbtn(ICON.block, '블록 선택 (Alt+드래그)', () => { blk.mode = !blk.mode; b.setAttribute('aria-pressed', String(blk.mode)); if (!blk.mode) blkClear(); ed.focus(); });
+  const b = fbtn(ICON.block, '블록 선택 (Alt+드래그)', () => { blockMode = !blockMode; b.setAttribute('aria-pressed', String(blockMode)); blkClear(); applySettings(); ed.focus(); });
   b.setAttribute('aria-pressed', 'false'); return b;
 }
 function buildRightBar() {

@@ -66,6 +66,27 @@ namespace TNote
             g.TextRenderingHint = hint;
         }
 
+        // The T series mark: a rounded square outline with a bold T inside (MakeIcon.cs draws tnote.ico the same way)
+        public static void Mark(Graphics g, RectangleF r, Color c)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float s = Math.Min(r.Width, r.Height), w = s * 0.11f, x = r.X + (r.Width - s) / 2, y = r.Y + (r.Height - s) / 2;
+            var box = new RectangleF(x + w / 2 + s * 0.03f, y + w / 2 + s * 0.03f, s - w - s * 0.06f, s - w - s * 0.06f);
+            float d = s * 0.38f;
+            using (var path = new GraphicsPath())
+            using (var pen = new Pen(c, w))
+            using (var b = new SolidBrush(c))
+            {
+                path.AddArc(box.X, box.Y, d, d, 180, 90); path.AddArc(box.Right - d, box.Y, d, d, 270, 90);
+                path.AddArc(box.Right - d, box.Bottom - d, d, d, 0, 90); path.AddArc(box.X, box.Bottom - d, d, d, 90, 90);
+                path.CloseFigure();
+                g.DrawPath(pen, path);
+                float bar = s * 0.46f, stem = w * 1.15f, top = y + s * 0.27f, bottom = y + s * 0.75f;
+                g.FillRectangle(b, x + (s - bar) / 2, top, bar, w * 1.1f);
+                g.FillRectangle(b, x + (s - stem) / 2, top, stem, bottom - top);
+            }
+        }
+
         public static void Glyph(Graphics g, string s, Font f, Rectangle r, Color c)
         {
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
@@ -120,7 +141,7 @@ namespace TNote
             g.Clear(P.Title);
             var docs = Docs(); var active = Active();
             // app glyph
-            Ui.Glyph(g, Ui.Page, Ui.Icons(12f), new Rectangle(13, 9, 24, 26), P.Accent);
+            Ui.Mark(g, new RectangleF(13, 10, 23, 23), P.Accent);
             for (int i = 0; i < docs.Count; i++)
             {
                 var r = TabRect(i); var d = docs[i]; bool on = d == active, hov = r.Contains(mouse);

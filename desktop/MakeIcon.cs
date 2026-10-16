@@ -1,11 +1,12 @@
-// Builds tnote.ico from the same document glyph the title bar shows (Segoe Fluent Icons U+E8A5 in
-// the accent color), at the sizes Windows uses for shortcuts, the taskbar and Explorer.
+// Builds tnote.ico from the same mark the title bar draws (Ui.Mark in tnote.cs): the T series box, a
+// rounded square outline with a bold T inside, at the sizes Windows uses for shortcuts, the taskbar and Explorer.
+// A second argument also saves the 256px image as a PNG preview.
 //   csc /nologo /out:%TEMP%\MakeIcon.exe /r:System.Drawing.dll MakeIcon.cs && %TEMP%\MakeIcon.exe tnote.ico
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
-using System.Drawing.Text;
 using System.IO;
 
 static class MakeIcon
@@ -14,21 +15,17 @@ static class MakeIcon
     {
         int[] sizes = { 16, 20, 24, 32, 40, 48, 64, 128, 256 };
         var images = new List<byte[]>();
-        using (var font = new FontFamily("Segoe Fluent Icons"))
-            foreach (int s in sizes)
-                using (var bmp = new Bitmap(s, s, PixelFormat.Format32bppArgb))
-                using (var g = Graphics.FromImage(bmp))
-                using (var brush = new SolidBrush(Color.FromArgb(0x00, 0x5F, 0xB8)))
-                using (var f = new Font(font, s * 0.82f, GraphicsUnit.Pixel))
-                using (var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
-                using (var ms = new MemoryStream())
-                {
-                    g.TextRenderingHint = s < 32 ? TextRenderingHint.AntiAliasGridFit : TextRenderingHint.AntiAlias;
-                    g.DrawString("", f, brush, new RectangleF(0, 0, s, s), sf);
-                    if (s >= 256) bmp.Save(ms, ImageFormat.Png); // PNG only for 256: older loaders read small entries as DIBs
-                    else WriteDib(bmp, ms);
-                    images.Add(ms.ToArray());
-                }
+        foreach (int s in sizes)
+            using (var bmp = new Bitmap(s, s, PixelFormat.Format32bppArgb))
+            using (var g = Graphics.FromImage(bmp))
+            using (var ms = new MemoryStream())
+            {
+                Mark(g, new RectangleF(0, 0, s, s), Color.FromArgb(0x3B, 0x7B, 0xC4));
+                if (s == 256 && args.Length > 1) bmp.Save(args[1], ImageFormat.Png);
+                if (s >= 256) bmp.Save(ms, ImageFormat.Png); // PNG only for 256: older loaders read small entries as DIBs
+                else WriteDib(bmp, ms);
+                images.Add(ms.ToArray());
+            }
 
         // ICO container: one directory entry per size, then the image data
         using (var w = new BinaryWriter(File.Create(args[0])))
@@ -43,6 +40,27 @@ static class MakeIcon
                 offset += images[i].Length;
             }
             foreach (var img in images) w.Write(img);
+        }
+    }
+
+    // Same drawing as Ui.Mark in tnote.cs
+    static void Mark(Graphics g, RectangleF r, Color c)
+    {
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        float s = Math.Min(r.Width, r.Height), w = s * 0.11f, x = r.X + (r.Width - s) / 2, y = r.Y + (r.Height - s) / 2;
+        var box = new RectangleF(x + w / 2 + s * 0.03f, y + w / 2 + s * 0.03f, s - w - s * 0.06f, s - w - s * 0.06f);
+        float d = s * 0.38f;
+        using (var path = new GraphicsPath())
+        using (var pen = new Pen(c, w))
+        using (var b = new SolidBrush(c))
+        {
+            path.AddArc(box.X, box.Y, d, d, 180, 90); path.AddArc(box.Right - d, box.Y, d, d, 270, 90);
+            path.AddArc(box.Right - d, box.Bottom - d, d, d, 0, 90); path.AddArc(box.X, box.Bottom - d, d, d, 90, 90);
+            path.CloseFigure();
+            g.DrawPath(pen, path);
+            float bar = s * 0.46f, stem = w * 1.15f, top = y + s * 0.27f, bottom = y + s * 0.75f;
+            g.FillRectangle(b, x + (s - bar) / 2, top, bar, w * 1.1f);
+            g.FillRectangle(b, x + (s - stem) / 2, top, stem, bottom - top);
         }
     }
 

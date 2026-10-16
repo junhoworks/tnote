@@ -891,7 +891,7 @@ namespace TNote
         // RichEdit keeps a single selection, so the block is held here and painted over the text.
         // Its corners are visual lines and document x (client x + horizontal scroll), so scrolling keeps it in place.
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, ref Point l);
-        bool blockOn, blockDrag, blockQuiet;
+        bool blockOn, blockDrag, blockQuiet, blockUnwrapped;
         int blockLine0, blockLine1, blockX0, blockX1;
         Timer blockTimer;
         public bool BlockActive { get { return blockOn; } }
@@ -906,8 +906,21 @@ namespace TNote
             if (m.Msg == WM_LBUTTONDOWN && (BlockMode || (ModifierKeys & Keys.Alt) != 0))
             {
                 Focus();
-                var p = PointToClient(Cursor.Position); var sp = ScrollPos;
-                blockQuiet = true; Select(GetCharIndexFromPosition(p), 0); blockQuiet = false;
+                var p = PointToClient(Cursor.Position);
+                int ci = GetCharIndexFromPosition(p);
+                if (WordWrap) // lines are unwrapped while the block lasts, with the clicked character kept under the pointer
+                {
+                    var c0 = GetPositionFromCharIndex(ci); int dx = p.X - c0.X, dy = p.Y - c0.Y;
+                    blockUnwrapped = true; WordWrap = false;
+                    var c = GetPositionFromCharIndex(ci); var s0 = ScrollPos;
+                    var to = new Point(Math.Max(0, c.X + s0.X - c0.X), Math.Max(0, c.Y + s0.Y - c0.Y));
+                    SendMessage(Handle, 0x0400 + 222 /* EM_SETSCROLLPOS */, IntPtr.Zero, ref to);
+                    c = GetPositionFromCharIndex(ci);
+                    var np = new Point(c.X + dx, c.Y + dy);
+                    if (np != p) { p = np; Cursor.Position = PointToScreen(p); }
+                }
+                var sp = ScrollPos;
+                blockQuiet = true; Select(ci, 0); blockQuiet = false;
                 blockLine0 = blockLine1 = LineAt(p.Y);
                 blockX0 = blockX1 = Math.Max(0, Math.Min(ClientSize.Width - 1, p.X)) + sp.X;
                 blockOn = blockDrag = true; Capture = true;
@@ -927,6 +940,13 @@ namespace TNote
             }
             else if (blockOn)
             {
+                if ((m.Msg == WM_LBUTTONDOWN || m.Msg == WM_LBUTTONDBLCLK) && blockUnwrapped)
+                {
+                    // rewrapping moves the text, so place the caret at the clicked character instead
+                    int ci = GetCharIndexFromPosition(PointToClient(Cursor.Position));
+                    ClearBlock(); Select(ci, 0);
+                    return true;
+                }
                 if (m.Msg == WM_LBUTTONDOWN || m.Msg == WM_LBUTTONDBLCLK) ClearBlock();
                 else if (m.Msg == WM_KEYDOWN)
                 {
@@ -966,6 +986,11 @@ namespace TNote
             if (!blockOn) return;
             blockOn = blockDrag = false;
             if (blockTimer != null) blockTimer.Stop();
+            if (blockUnwrapped)
+            {
+                blockUnwrapped = false;
+                if (!BlockMode) { WordWrap = true; ScrollToCaret(); }
+            }
             Invalidate();
         }
 
@@ -1412,7 +1437,8 @@ namespace TNote
             var d = new TabDoc();
             d.Box = new MdEditor
             {
-                Dock = DockStyle.Fill, ScrollBars = ShownWrap ? RichTextBoxScrollBars.Vertical : RichTextBoxScrollBars.Both, WordWrap = ShownWrap, BlockMode = blockMode,
+                // Both bars always: changing ScrollBars recreates the window; with word wrap the horizontal one stays hidden
+                Dock = DockStyle.Fill, ScrollBars = RichTextBoxScrollBars.Both, WordWrap = ShownWrap, BlockMode = blockMode,
                 AcceptsTab = true, HideSelection = false, BorderStyle = BorderStyle.None,
                 Font = editorFont, BackColor = P.Editor, ForeColor = P.Text, Visible = false, Formatted = !showMarks
             };
@@ -1744,7 +1770,7 @@ namespace TNote
         bool ShownWrap { get { return wordWrap && !blockMode; } }
         void ApplyWrap()
         {
-            foreach (var d in docs) { d.Box.WordWrap = ShownWrap; d.Box.ScrollBars = ShownWrap ? RichTextBoxScrollBars.Vertical : RichTextBoxScrollBars.Both; }
+            foreach (var d in docs) { d.Box.WordWrap = ShownWrap; }
         }
 
         void SetDark(bool on) { dark = on; darkItem.Checked = on; ApplyTheme(); SaveSettings(); }

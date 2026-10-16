@@ -176,8 +176,8 @@ let state = store.get('np.state', null) || {
   tabs: [{ id: 1, name: null, text: SAMPLE, dirty: false, enc: 'UTF-8', eol: '\r\n' }], active: 1, nextId: 2
 };
 let settings = Object.assign({ wrap: true, statusBar: true, zoom: 1, theme: 'system', live: true }, store.get('np.settings', {}));
-let blockMode = false; // block selection toggle: lines are shown unwrapped while it is on
-const shownWrap = () => settings.wrap && !blockMode;
+let blockMode = false, blockUnwrapped = false; // block selection toggle, and an Alt+drag block: lines are shown unwrapped while either lasts
+const shownWrap = () => settings.wrap && !blockMode && !blockUnwrapped;
 let recent = store.get('np.recent', []);
 const handles = {}; // File System Access handles (not persisted)
 const undoStacks = {}; // per-tab edit history is native; we keep scroll/selection only
@@ -442,6 +442,7 @@ bOv.append(bMir, bLayer); $('editorWrap').append(bOv);
 function blkClear() {
   clearInterval(blk.timer); blk.on = blk.drag = false; blk.segs = []; blk.lines = [];
   bLayer.textContent = ''; bMir.textContent = '';
+  if (blockUnwrapped) { blockUnwrapped = false; applySettings(); }
 }
 function blkMirror() {
   bOv.style.right = (ed.offsetWidth - ed.clientWidth) + 'px'; bOv.style.bottom = (ed.offsetHeight - ed.clientHeight) + 'px';
@@ -454,6 +455,14 @@ function blkMirror() {
     f.append(d); blk.lines.push({ d, o, l }); o += l.length + 1;
   }
   bMir.append(f);
+}
+function blkCharPt(o) { // document position of the character at offset o, from the mirror
+  const L = blk.lines.findLast(l => l.o <= o), mr = bMir.getBoundingClientRect(), tn = L.d.firstChild;
+  if (!tn) return { x: L.d.getBoundingClientRect().left - mr.left + parseFloat(getComputedStyle(bMir).paddingLeft), y: L.d.offsetTop };
+  const i = Math.min(o - L.o, L.l.length), end = i === L.l.length, rg = document.createRange();
+  rg.setStart(tn, end ? i - 1 : i); rg.setEnd(tn, end ? i : i + 1);
+  const r = rg.getClientRects()[0];
+  return { x: (end ? r.right : r.left) - mr.left, y: r.top - mr.top };
 }
 function blkPt(cx, cy) {
   const r = $('editorWrap').getBoundingClientRect();
@@ -517,11 +526,24 @@ function blkDelete() { // one edit over the whole span, so a single undo restore
 }
 ed.addEventListener('mousedown', e => {
   if (e.button !== 0) return;
+  if (blockUnwrapped) { // rewrapping moves the text, so place the caret at the clicked character instead
+    const p = blkPt(e.clientX, e.clientY), s = blkSegs(p.x, p.y, p.x, p.y), o = s.length ? s[0].a : ed.value.length;
+    e.preventDefault(); blkClear(); ed.focus(); ed.setSelectionRange(o, o);
+    if (!e.altKey && !blockMode) return;
+  }
   blkClear();
   if (!e.altKey && !blockMode) return;
   e.preventDefault(); blkMirror(); ed.focus();
-  blk.a = blk.b = blkPt(e.clientX, e.clientY); blk.drag = true; blk.px = e.clientX; blk.py = e.clientY;
-  const s = blkSegs(blk.a.x, blk.a.y, blk.a.x, blk.a.y), o = s.length ? s[0].a : ed.value.length;
+  let p = blkPt(e.clientX, e.clientY);
+  const s = blkSegs(p.x, p.y, p.x, p.y), o = s.length ? s[0].a : ed.value.length;
+  if (shownWrap()) { // lines are unwrapped while the block lasts, with the clicked character kept under the pointer
+    const c0 = blkCharPt(o), sx = ed.scrollLeft, sy = ed.scrollTop;
+    blockUnwrapped = true; applySettings(); blkMirror();
+    const c = blkCharPt(o);
+    ed.scrollLeft = Math.max(0, c.x - (c0.x - sx)); ed.scrollTop = Math.max(0, c.y - (c0.y - sy));
+    p = { x: c.x + p.x - c0.x, y: c.y + p.y - c0.y };
+  }
+  blk.a = blk.b = p; blk.drag = true; blk.px = e.clientX; blk.py = e.clientY;
   ed.setSelectionRange(o, o);
   blk.timer = setInterval(() => { // auto-scroll while the pointer is outside the editor
     const r = ed.getBoundingClientRect(), lh = parseFloat(getComputedStyle(ed).lineHeight), t = ed.scrollTop, l = ed.scrollLeft;

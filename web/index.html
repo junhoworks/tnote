@@ -280,7 +280,7 @@ function saveEditorToTab() {
   t.text = ed.value; t.sel = [ed.selectionStart, ed.selectionEnd]; t.scroll = ed.scrollTop;
 }
 function loadTabToEditor() {
-  const t = cur(); ed.value = t.text;
+  blkClear(); const t = cur(); ed.value = t.text;
   const [a, b] = t.sel || [0, 0]; ed.setSelectionRange(a, b); ed.scrollTop = t.scroll || 0;
   renderTabs(); updateStatus(); renderLive();
   if (settings.preview) $('preview').innerHTML = renderMarkdown(ed.value); else ed.focus();
@@ -419,7 +419,7 @@ function updateStatus() {
   $('stEnc').textContent = t.enc;
 }
 ed.addEventListener('input', () => {
-  const t = cur(); t.text = ed.value;
+  const t = cur(); t.text = ed.value; blkClear();
   if (!t.dirty) { t.dirty = true; renderTabs(); }
   updateStatus(); persistSoon(); renderLive();
 });
@@ -427,6 +427,113 @@ ed.addEventListener('scroll', syncLive);
 new ResizeObserver(syncLive).observe(ed);
 ['keyup', 'click', 'select'].forEach(ev => ed.addEventListener(ev, updateStatus));
 document.addEventListener('selectionchange', () => { if (document.activeElement === ed) updateStatus(); });
+
+// ---------- block (column) selection: Alt+drag ----------
+// Corners are kept in document coordinates (scroll offset included). Char positions come from a hidden
+// mirror of the text (one div per logical line), so it works for lines scrolled out of view.
+const blk = { on: false, drag: false, a: null, b: null, segs: [], px: 0, py: 0, timer: 0, lines: [] };
+const bOv = document.createElement('div'), bMir = document.createElement('div'), bLayer = document.createElement('div');
+bOv.style.cssText = 'position:absolute;left:0;top:0;overflow:hidden;pointer-events:none';
+bMir.style.cssText = 'inset:auto;left:0;top:0;overflow:visible;visibility:hidden';
+bLayer.style.cssText = 'position:absolute;left:0;top:0;will-change:transform';
+bOv.append(bMir, bLayer); $('editorWrap').append(bOv);
+function blkClear() {
+  clearInterval(blk.timer); blk.on = blk.drag = false; blk.segs = []; blk.lines = [];
+  bLayer.textContent = ''; bMir.textContent = '';
+}
+function blkMirror() {
+  bOv.style.right = (ed.offsetWidth - ed.clientWidth) + 'px'; bOv.style.bottom = (ed.offsetHeight - ed.clientHeight) + 'px';
+  bMir.className = 'hl' + (settings.wrap ? '' : ' nowrap');
+  bMir.style.fontSize = ed.style.fontSize; bMir.style.width = settings.wrap ? ed.clientWidth + 'px' : 'auto';
+  bMir.textContent = ''; blk.lines = [];
+  const f = document.createDocumentFragment(); let o = 0;
+  for (const l of ed.value.split('\n')) {
+    const d = document.createElement('div'); d.style.cssText = 'will-change:auto;min-height:1.4em'; d.textContent = l;
+    f.append(d); blk.lines.push({ d, o, l }); o += l.length + 1;
+  }
+  bMir.append(f);
+}
+function blkPt(cx, cy) {
+  const r = $('editorWrap').getBoundingClientRect();
+  return { x: cx - r.left + ed.scrollLeft, y: cy - r.top + ed.scrollTop };
+}
+// Segments for the rectangle (document coords): per visual line it touches, the chars between the
+// boundaries nearest to the left and right edge.
+function blkSegs(x1, y1, x2, y2) {
+  const xl = Math.min(x1, x2), xr = Math.max(x1, x2), yt = Math.min(y1, y2), yb = Math.max(y1, y2);
+  const out = [], mr = bMir.getBoundingClientRect(), rg = document.createRange();
+  const lh = parseFloat(getComputedStyle(bMir).lineHeight);
+  const nearest = (bs, x) => bs.reduce((m, b, i) => Math.abs(b.x - x) < Math.abs(bs[m].x - x) ? i : m, 0);
+  const emit = g => {
+    if (!g || g.y + lh <= yt || g.y > yb) return;
+    const s = nearest(g.bs, xl), e = nearest(g.bs, xr);
+    out.push({ a: g.bs[s].i, b: g.bs[e].i, x: g.bs[s].x, w: g.bs[e].x - g.bs[s].x, y: g.y, h: lh });
+  };
+  for (const L of blk.lines) {
+    const top = L.d.offsetTop, bot = top + L.d.offsetHeight;
+    if (bot <= yt || top > yb) continue;
+    const tn = L.d.firstChild;
+    if (!tn) { out.push({ a: L.o, b: L.o, x: xl, w: 0, y: top, h: lh }); continue; }
+    let g = null;
+    for (let i = 0; i < L.l.length;) {
+      const n = (L.l.codePointAt(i) > 0xFFFF) ? 2 : 1;
+      rg.setStart(tn, i); rg.setEnd(tn, i + n);
+      const r = rg.getClientRects()[0]; i += n;
+      if (!r) continue;
+      const ry = r.top - mr.top;
+      if (!g || ry - g.y > lh * 0.5) { emit(g); g = { y: ry, bs: [{ i: L.o + i - n, x: r.left - mr.left }] }; }
+      g.bs.push({ i: L.o + i, x: r.right - mr.left });
+    }
+    emit(g);
+  }
+  return out;
+}
+function blkPaint() {
+  bLayer.textContent = '';
+  for (const s of blk.segs) {
+    const d = document.createElement('div');
+    d.style.cssText = `position:absolute;left:${s.x}px;top:${s.y}px;width:${Math.max(1, s.w)}px;height:${s.h}px;background:color-mix(in srgb, var(--accent) 30%, transparent)`;
+    bLayer.append(d);
+  }
+  blkSync();
+}
+function blkSync() { bLayer.style.transform = `translate(${-ed.scrollLeft}px, ${-ed.scrollTop}px)`; }
+function blkMove() {
+  blk.b = blkPt(blk.px, blk.py);
+  blk.segs = blkSegs(blk.a.x, blk.a.y, blk.b.x, blk.b.y); blkPaint();
+}
+const blkText = () => blk.segs.map(s => ed.value.slice(s.a, s.b)).join('\n');
+function blkDelete() { // one edit over the whole span, so a single undo restores it
+  const segs = blk.segs, v = ed.value; if (!segs.length) return;
+  const lo = segs[0].a, hi = segs[segs.length - 1].b; let r = '', p = lo;
+  for (const s of segs) { r += v.slice(p, s.a); p = s.b; }
+  r += v.slice(p, hi);
+  blkClear(); ed.focus(); ed.setSelectionRange(lo, hi);
+  if (r === v.slice(lo, hi)) return;
+  if (!(r ? document.execCommand('insertText', false, r) : document.execCommand('delete'))) { ed.setRangeText(r, lo, hi, 'end'); ed.dispatchEvent(new Event('input')); }
+  ed.setSelectionRange(lo, lo);
+}
+ed.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  blkClear();
+  if (!e.altKey) return;
+  e.preventDefault(); blkMirror(); ed.focus();
+  blk.a = blk.b = blkPt(e.clientX, e.clientY); blk.drag = true; blk.px = e.clientX; blk.py = e.clientY;
+  const s = blkSegs(blk.a.x, blk.a.y, blk.a.x, blk.a.y), o = s.length ? s[0].a : ed.value.length;
+  ed.setSelectionRange(o, o);
+  blk.timer = setInterval(() => { // auto-scroll while the pointer is outside the editor
+    const r = ed.getBoundingClientRect(), lh = parseFloat(getComputedStyle(ed).lineHeight), t = ed.scrollTop, l = ed.scrollLeft;
+    if (blk.py < r.top) ed.scrollTop -= lh; else if (blk.py > r.bottom) ed.scrollTop += lh;
+    if (!settings.wrap) { if (blk.px < r.left) ed.scrollLeft -= lh; else if (blk.px > r.right) ed.scrollLeft += lh; }
+    if (ed.scrollTop !== t || ed.scrollLeft !== l) blkMove();
+  }, 40);
+});
+document.addEventListener('mousemove', e => { if (blk.drag) { blk.px = e.clientX; blk.py = e.clientY; blk.on = true; blkMove(); } });
+document.addEventListener('mouseup', () => { if (blk.drag) { blk.drag = false; clearInterval(blk.timer); } });
+ed.addEventListener('copy', e => { if (blk.on && blk.segs.length) { e.clipboardData.setData('text/plain', blkText()); e.preventDefault(); } });
+ed.addEventListener('cut', e => { if (blk.on && blk.segs.length) { e.clipboardData.setData('text/plain', blkText()); e.preventDefault(); blkDelete(); } });
+ed.addEventListener('scroll', blkSync);
+new ResizeObserver(() => { if (settings.wrap) blkClear(); }).observe(ed);
 
 // ---------- view ----------
 function applySettings() {
@@ -468,7 +575,7 @@ function findNext(forward) {
 }
 function setText(v, selStart, selEnd) {
   // execCommand keeps the native undo stack where supported
-  ed.focus(); ed.select();
+  blkClear(); ed.focus(); ed.select();
   if (!document.execCommand('insertText', false, v)) { ed.value = v; ed.dispatchEvent(new Event('input')); }
   ed.setSelectionRange(selStart, selEnd);
 }
@@ -549,7 +656,7 @@ const MENUS = () => [
     ['바꾸기...', 'Ctrl+H', () => showFind(true)],
     ['이동...', 'Ctrl+G', gotoLine],
     '-',
-    ['모두 선택', 'Ctrl+A', () => { ed.focus(); ed.select(); }],
+    ['모두 선택', 'Ctrl+A', () => { blkClear(); ed.focus(); ed.select(); }],
     ['시간/날짜', 'F5', insertDate],
   ]],
   ['보기', [
@@ -943,6 +1050,13 @@ document.addEventListener('keydown', e => {
   if ($('modalRoot').firstChild) return;
   const k = e.key.toLowerCase(), c = e.ctrlKey || e.metaKey;
   const act = (fn) => { e.preventDefault(); closeMenus(); fn(); };
+  if (blk.on && !['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) {
+    if (c && (k === 'c' || k === 'x')) {
+      e.preventDefault(); navigator.clipboard.writeText(blkText()).catch(() => {}); if (k === 'x') blkDelete(); return;
+    }
+    if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); blkDelete(); return; }
+    blkClear();
+  }
   if (e.key === 'Escape' && openMenu) return act(() => {});
   if (c && !e.shiftKey && k === 's') return act(() => save(false));
   if (c && e.shiftKey && k === 's') return act(() => save(true));

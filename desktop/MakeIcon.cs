@@ -1,6 +1,6 @@
-// Builds Notepad.ico from the same document glyph the title bar shows (Segoe Fluent Icons U+E8A5 in
+// Builds tnote.ico from the same document glyph the title bar shows (Segoe Fluent Icons U+E8A5 in
 // the accent color), at the sizes Windows uses for shortcuts, the taskbar and Explorer.
-//   csc /nologo /out:%TEMP%\MakeIcon.exe /r:System.Drawing.dll MakeIcon.cs && %TEMP%\MakeIcon.exe Notepad.ico
+//   csc /nologo /out:%TEMP%\MakeIcon.exe /r:System.Drawing.dll MakeIcon.cs && %TEMP%\MakeIcon.exe tnote.ico
 using System;
 using System.Collections.Generic;
 using System.Drawing;

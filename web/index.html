@@ -1,4 +1,4 @@
-<title>웹 메모장</title>
+<title>Tnote</title>
 <style>
 /* Layout: Windows 11 Notepad — tab strip (title bar), menu + formatting row, editor, status bar.
    Light colors are sampled from a screenshot of the real app. */
@@ -157,7 +157,7 @@ textarea.nowrap { white-space: pre; overflow-wrap: normal; overflow-x: auto; }
 <div id="modalRoot"></div>
 
 <script>
-// Same feature set as the WinForms clone (Notepad.cs), modeled on Windows 11 Notepad's
+// Same feature set as the WinForms version (tnote.cs), modeled on Windows 11 Notepad's
 // TabsBar / MainMenuBar / FindReplaceDialog / GotoDialogContent / StatusBar.
 const $ = id => document.getElementById(id);
 const ed = $('ed');
@@ -165,7 +165,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 };
-const SAMPLE = '웹 메모장에 오신 것을 환영합니다.\n\n' +
+const SAMPLE = 'Tnote에 오신 것을 환영합니다.\n\n' +
   '- 파일 > 열기(Ctrl+O)로 텍스트 파일을 열 수 있습니다.\n' +
   '- 탭: Alt+N 새 탭, Alt+W 탭 닫기 (Ctrl+N/W는 브라우저가 사용합니다)\n' +
   '- Ctrl+F 찾기, Ctrl+H 바꾸기, Ctrl+G 줄 이동, F5 시간/날짜\n' +
@@ -251,7 +251,7 @@ function renderTabs() {
     if (cls) b.className = cls; b.onclick = e => { e.stopPropagation(); fn(); }; caps.append(b);
   });
   box.append(caps);
-  document.title = title(cur()) + ' - 웹 메모장';
+  document.title = title(cur()) + ' - Tnote';
 }
 
 function toggleCollapse() {
@@ -296,7 +296,7 @@ async function closeTab(id) {
   const t = state.tabs.find(x => x.id === id);
   if (t.dirty) {
     state.active = id; loadTabToEditor();
-    const r = await dialog({ title: '메모장', body: title(t) + '의 변경 내용을 저장하시겠습니까?',
+    const r = await dialog({ title: 'Tnote', body: title(t) + '의 변경 내용을 저장하시겠습니까?',
       buttons: [{ label: '저장', value: 'save', primary: true }, { label: '저장 안 함', value: 'discard' }, { label: '취소', value: null }] });
     if (r === null) return;
     if (r === 'save' && !(await save(false))) return;

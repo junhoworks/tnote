@@ -1,4 +1,4 @@
-// Notepad clone modeled on Windows 11 Notepad. Feature set comes from NotepadXamlUI.winmd
+// tnote: a text editor modeled on Windows 11 Notepad. Feature set comes from NotepadXamlUI.winmd
 // (TabsBar, MainMenuBar, FormattingToolbar, FindReplaceDialog, GotoDialogContent, StatusBar,
 // FontSettingSection, ThemeSettingSection, WordWrapSettingSection, RecentFilesViewModel);
 // colors and layout are measured from a screenshot of the real app. AI (Cowriter) is left out.
@@ -13,7 +13,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
-namespace NotepadClone
+namespace TNote
 {
     class TabDoc
     {
@@ -901,7 +901,7 @@ namespace NotepadClone
         TabDoc active;
         readonly WebBrowser preview = new WebBrowser { Dock = DockStyle.Fill, IsWebBrowserContextMenuEnabled = false, AllowWebBrowserDrop = false, Visible = false };
         static readonly string SettingsPath = System.IO.Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "NotepadClone", "recent.txt");
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "tnote", "recent.txt");
         static readonly string ViewSettingsPath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(SettingsPath), "settings.txt");
 
         // ---------- view settings (font, wrap, theme...) kept across runs as key=value lines ----------
@@ -938,15 +938,30 @@ namespace NotepadClone
         string lastFind = "";
         bool matchCase;
 
+        // one-time move of settings from the old app-data folder
+        static void MigrateSettings()
+        {
+            try
+            {
+                string root = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                string dst = System.IO.Path.Combine(root, "tnote"), src = System.IO.Path.Combine(root, "NotepadClone");
+                if (Directory.Exists(dst) || !Directory.Exists(src)) return;
+                Directory.CreateDirectory(dst);
+                foreach (var f in Directory.GetFiles(src)) File.Copy(f, System.IO.Path.Combine(dst, System.IO.Path.GetFileName(f)));
+            }
+            catch (Exception) { }
+        }
+
         public MainForm(string[] args)
         {
-            Text = "메모장";
+            MigrateSettings();
+            Text = "tnote";
             Size = new Size(1000, 640);
             MinimumSize = new Size(480, 300);
             KeyPreview = true;
             DoubleBuffered = true;
             Font = Ui.Body;
-            try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch (Exception) { } // taskbar: the exe's Notepad.ico
+            try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch (Exception) { } // taskbar: the exe's tnote.ico
             Padding = new Padding(1, 0, 1, 1); // edge strips the form hit-tests as resize borders
 
             strip.Docs = () => docs; strip.Active = () => active; strip.Select = Switch; strip.CloseDoc = CloseTab; strip.NewTab = () => NewTab();
@@ -1241,7 +1256,7 @@ namespace NotepadClone
             path = System.IO.Path.GetFullPath(path);
             var existing = docs.FirstOrDefault(x => string.Equals(x.Path, path, StringComparison.OrdinalIgnoreCase));
             if (existing != null) { Switch(existing); return; }
-            if (!File.Exists(path)) { MessageBox.Show(this, path + " 파일을 찾을 수 없습니다.", "메모장"); return; }
+            if (!File.Exists(path)) { MessageBox.Show(this, path + " 파일을 찾을 수 없습니다.", "tnote"); return; }
             var bytes = File.ReadAllBytes(path);
             var enc = DetectEncoding(bytes);
             string text = enc.GetString(bytes);
@@ -1304,7 +1319,7 @@ namespace NotepadClone
         // Saving formatted text as a non-Markdown file: Yes = save as Markdown, No = save as text, Cancel
         DialogResult AskKeepFormatting()
         {
-            using (var f = new Form { Text = "메모장", FormBorderStyle = FormBorderStyle.FixedDialog, ClientSize = new Size(520, 200), StartPosition = FormStartPosition.CenterParent, MaximizeBox = false, MinimizeBox = false, ShowInTaskbar = false, Font = Ui.Body, BackColor = P.Menu, ForeColor = P.Text })
+            using (var f = new Form { Text = "tnote", FormBorderStyle = FormBorderStyle.FixedDialog, ClientSize = new Size(520, 200), StartPosition = FormStartPosition.CenterParent, MaximizeBox = false, MinimizeBox = false, ShowInTaskbar = false, Font = Ui.Body, BackColor = P.Menu, ForeColor = P.Text })
             {
                 var title = new Label { Text = "서식을 유지하려면 Markdown으로 저장", Font = new Font(Ui.Body.FontFamily, 14f), Left = 24, Top = 18, Width = 470, Height = 32 };
                 var body = new Label { Text = "텍스트 파일입니다. 굵게 및 제목 등의 현재 서식을 유지하려면 Markdown 파일(.md)로 저장합니다.", Left = 24, Top = 56, Width = 470, Height = 40 };
@@ -1360,7 +1375,7 @@ namespace NotepadClone
         {
             if (!d.Dirty) return true;
             Switch(d);
-            var r = MessageBox.Show(this, d.Title + "의 변경 내용을 저장하시겠습니까?", "메모장", MessageBoxButtons.YesNoCancel);
+            var r = MessageBox.Show(this, d.Title + "의 변경 내용을 저장하시겠습니까?", "tnote", MessageBoxButtons.YesNoCancel);
             if (r == DialogResult.Cancel) return false;
             return r == DialogResult.No || Save(d, false);
         }
@@ -1376,7 +1391,7 @@ namespace NotepadClone
             if (active == d) Switch(docs[Math.Max(0, i - 1)]); else strip.Invalidate();
         }
 
-        void UpdateTitle() { if (Cur != null) Text = Cur.Title + " - 메모장"; }
+        void UpdateTitle() { if (Cur != null) Text = Cur.Title + " - tnote"; }
 
         void UpdateStatus()
         {
@@ -1456,7 +1471,7 @@ namespace NotepadClone
                 idx = start < 0 ? -1 : b.Text.LastIndexOf(what, start, cmp);
                 if (idx < 0) idx = b.Text.LastIndexOf(what, cmp);
             }
-            if (idx < 0) { MessageBox.Show(this, "\"" + what + "\"을(를) 찾을 수 없습니다.", "메모장"); return; }
+            if (idx < 0) { MessageBox.Show(this, "\"" + what + "\"을(를) 찾을 수 없습니다.", "tnote"); return; }
             b.Select(idx, what.Length); b.ScrollToCaret(); UpdateStatus();
         }
 
@@ -1754,7 +1769,7 @@ namespace NotepadClone
         {
             EnsureEditing();
             var b = Cur.Box;
-            if (b.SelectionLength == 0) { MessageBox.Show(this, "서식을 지울 텍스트를 선택하세요.", "메모장"); return; }
+            if (b.SelectionLength == 0) { MessageBox.Show(this, "서식을 지울 텍스트를 선택하세요.", "tnote"); return; }
             if (!showMarks) { b.ClearFormat(P); Changed(); return; }
             string s = b.SelectedText;
             s = Regex.Replace(s, @"(?m)^#{1,6}\s+", "");

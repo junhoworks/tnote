@@ -11,6 +11,7 @@ The feature set was mapped from Notepad's `NotepadXamlUI.winmd` metadata (analyz
 - Formatting toolbar: headings, lists, bold, italic, strikethrough, link, code, table, clear formatting.
 - Formatting works like Windows Notepad (desktop): the editor shows formatted text with no Markdown markers. `.md` files open formatted and save as Markdown. Saving formatted text as `.txt` asks whether to save as Markdown or as plain text (formatting dropped). View > Markdown 기호 표시 switches to editing the Markdown source. A rendered preview is available with Ctrl+Shift+M.
 - The web version still edits Markdown source, with markers dimmed and the text styled in place.
+- Block (column) selection with Alt+drag: copy, cut and delete work on the block, and dragging past an edge scrolls
 - Find and replace (match case, wrap around, replace all), go to line, time/date (F5)
 - Zoom, word wrap, status bar, light and dark themes
 - Status bar: line/column, character count, file type, zoom, line ending (CRLF/LF/CR), encoding (UTF-8, UTF-8 BOM, UTF-16, ANSI)

@@ -1,0 +1,839 @@
+<title>웹 메모장</title>
+<style>
+/* Layout: Windows 11 Notepad — tab strip (title bar), menu + formatting row, editor, status bar.
+   Light colors are sampled from a screenshot of the real app. */
+:root {
+  --title: #d1dbec; --chrome: #f1f4f9; --surface: #f9f9f9; --bg: #f1f4f9;
+  --fg: #1a1a1a; --muted: #5f5f5f; --line: #e4e7ec; --accent: #005fb8;
+  --hover: #e3e7ee; --pressed: #d8dde6; --menu: #f9f9f9; --menu-line: #e0e0e0; --danger: #c42b1c;
+  --ui: "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+  --mono: Consolas, "Cascadia Mono", "D2Coding", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --title: #202020; --chrome: #2c2c2c; --surface: #272727; --bg: #2c2c2c;
+  --fg: #ffffff; --muted: #c5c5c5; --line: #1d1d1d; --accent: #60cdff;
+  --hover: #383838; --pressed: #333333; --menu: #2c2c2c; --menu-line: #3a3a3a; --danger: #ff99a4; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --title: #202020; --chrome: #2c2c2c; --surface: #272727; --bg: #2c2c2c;
+  --fg: #ffffff; --muted: #c5c5c5; --line: #1d1d1d; --accent: #60cdff;
+  --hover: #383838; --pressed: #333333; --menu: #2c2c2c; --menu-line: #3a3a3a; --danger: #ff99a4; color-scheme: dark }
+html, body { height: 100%; margin: 0; }
+[hidden] { display: none !important; }
+*, *::before, *::after { box-sizing: border-box; }
+body { background: var(--title); color: var(--fg); font-family: var(--ui); font-size: 14px; }
+.app { height: 100%; display: flex; flex-direction: column; min-width: 0; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+svg.i { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+svg.chev { width: 10px; height: 10px; }
+
+.tabs { display: flex; align-items: flex-end; height: 42px; padding: 0 8px 0 0; background: var(--title); overflow-x: auto; scrollbar-width: none; flex-shrink: 0; }
+.appicon { width: 48px; height: 42px; display: grid; place-items: center; flex-shrink: 0; color: var(--accent); }
+.appicon svg { width: 18px; height: 18px; }
+.tab { position: relative; display: flex; align-items: center; height: 36px; width: 240px; min-width: 80px; flex-shrink: 1;
+  padding: 0 4px 0 12px; border-radius: 8px 8px 0 0; color: var(--fg); }
+.tab:hover { background: var(--hover); }
+.tab.active { background: var(--chrome); }
+.tab + .tab:not(.active):not(:hover)::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 1px; background: color-mix(in srgb, var(--muted) 25%, transparent); }
+.tab.active + .tab::before, .tab:hover + .tab::before { display: none; }
+.tab .name { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; height: 100%; }
+.tab .x { width: 28px; height: 24px; border-radius: 4px; display: grid; place-items: center; flex-shrink: 0; }
+.tab .x svg { width: 10px; height: 10px; }
+.tab .x:hover { background: var(--pressed); }
+.tab .x .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--fg); }
+.addtab { width: 34px; height: 30px; margin: 0 0 3px 6px; border-radius: 4px; display: grid; place-items: center; flex-shrink: 0; }
+.addtab svg { width: 14px; height: 14px; }
+.addtab:hover { background: var(--hover); }
+.tabs .drag { flex: 1; min-width: 8px; align-self: stretch; }
+.caps { display: flex; align-self: flex-start; flex-shrink: 0; margin-right: -8px; }
+.caps button { width: 46px; height: 32px; display: grid; place-items: center; }
+.caps svg { width: 10px; height: 10px; stroke-width: 1; }
+.caps button:hover { background: var(--hover); }
+.caps button.close:hover { background: #c42b1c; color: #fff; }
+.app.collapsed > :not(.tabs) { display: none !important; }
+.app.collapsed { height: auto; }
+
+.menubar { display: flex; align-items: center; gap: 2px; height: 33px; padding: 0 8px; background: var(--chrome); border-bottom: 1px solid var(--line); position: relative; flex-shrink: 0; }
+.menubar > div { position: relative; }
+.menubtn { height: 27px; padding: 0 12px; border-radius: 4px; white-space: nowrap; }
+@media (max-width: 720px) { .menubar .gap, .fmt:not(.right) { display: none; } .menubtn { padding: 0 8px; } }
+.menubtn:hover, .menubtn[aria-expanded="true"] { background: var(--hover); }
+.menu { position: absolute; top: 100%; left: 0; z-index: 10; min-width: 260px; padding: 4px; margin-top: 3px;
+  background: var(--menu); border: 1px solid var(--menu-line); border-radius: 8px; box-shadow: 0 8px 16px rgb(0 0 0 / .14); }
+.menu button { display: flex; justify-content: space-between; gap: 24px; width: 100%; padding: 7px 12px; border-radius: 4px; text-align: left; }
+.menu button:hover { background: var(--hover); }
+.menu kbd { font-family: var(--ui); color: var(--muted); font-size: 12px; }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+.menu .check::before { content: "✓ "; color: var(--accent); }
+.menu .nocheck::before { content: "\2003 "; }
+.menu .empty { padding: 6px 10px; color: var(--muted); }
+
+.menubar .spacer { flex: 1; }
+.menubar .gap { width: calc(34% - 190px); flex-shrink: 1; min-width: 8px; }
+.fmt { display: flex; gap: 2px; align-items: center; }
+.fmt > div { position: relative; }
+.fbtn { min-width: 34px; height: 30px; padding: 0 8px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.fbtn:hover, .fbtn[aria-pressed="true"], .fbtn[aria-expanded="true"] { background: var(--hover); }
+.fbtn b { font-weight: 700; font-size: 15px; }
+.fmt .menu { min-width: 180px; }
+.fmt.right .menu { left: auto; right: 0; }
+.preview { flex: 1; min-height: 0; overflow: auto; background: var(--surface); padding: 10px 20px; line-height: 1.6; }
+.preview > * { max-width: 72ch; }
+.preview h1, .preview h2, .preview h3 { line-height: 1.25; text-wrap: balance; }
+.preview code { font-family: var(--mono); background: var(--hover); padding: 1px 4px; border-radius: 3px; }
+.preview pre { background: var(--hover); padding: 10px 12px; border-radius: 6px; overflow-x: auto; }
+.preview pre code { background: none; padding: 0; }
+.preview blockquote { margin: 0; padding-left: 12px; border-left: 3px solid var(--line); color: var(--muted); }
+.preview table { border-collapse: collapse; }
+.preview th, .preview td { border: 1px solid var(--line); padding: 4px 10px; }
+.preview a { color: var(--accent); }
+.preview hr { border: 0; border-top: 1px solid var(--line); }
+.findbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.findbar input[type=text] { flex: 1 1 160px; min-width: 0; padding: 5px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); color: var(--fg); font: inherit; }
+.findbar button { padding: 5px 10px; border-radius: 5px; border: 1px solid var(--line); }
+.findbar button:hover { background: var(--hover); }
+.findbar label { display: flex; gap: 4px; align-items: center; color: var(--muted); }
+.findbar .msg { color: var(--danger); font-size: 12px; }
+
+.editor { flex: 1; min-height: 0; background: var(--surface); }
+textarea { width: 100%; height: 100%; resize: none; border: 0; padding: 10px 14px; background: var(--surface); color: var(--fg);
+  font-family: var(--mono); font-size: 14.67px; line-height: 1.4; tab-size: 4; outline: none; scrollbar-width: thin; }
+textarea:focus-visible { outline: none; }
+textarea.nowrap { white-space: pre; overflow-wrap: normal; overflow-x: auto; }
+
+/* Column starts measured at 1000px: 24, 104, ~304 (centre), then right-anchored 388/320/152 from the edge */
+.status { display: grid; grid-template-columns: 80px minmax(0, 200px) 1fr 68px 168px 152px; align-items: center; height: 32px; padding-left: 14px;
+  background: var(--chrome); border-top: 1px solid var(--line); color: var(--fg); font-size: 12px;
+  font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; flex-shrink: 0; }
+.status span { padding: 0 10px; border-left: 1px solid var(--line); line-height: 14px; overflow: hidden; text-overflow: ellipsis; }
+.status span:first-child { border-left: 0; }
+@media (max-width: 640px) { .status { grid-template-columns: auto 1fr auto auto; } #stKind, #stEol { display: none; } }
+
+.modal { position: fixed; inset: 0; background: rgb(0 0 0 / .35); display: grid; place-items: center; z-index: 20; padding: 16px; }
+.dialog { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px; width: min(380px, 100%); display: grid; gap: 14px; box-shadow: 0 16px 40px rgb(0 0 0 / .25); }
+.dialog h2 { font-size: 16px; margin: 0; font-weight: 600; }
+.dialog p { margin: 0; color: var(--muted); }
+.dialog input { padding: 6px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); color: var(--fg); font: inherit; }
+.dialog .row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.dialog .row button { padding: 6px 14px; border-radius: 5px; border: 1px solid var(--line); }
+.dialog .row button.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+.toast { position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%); background: var(--fg); color: var(--surface); padding: 8px 14px; border-radius: 6px; z-index: 30; max-width: calc(100% - 32px); }
+</style>
+
+<div class="app">
+  <div class="tabs" id="tabs" role="tablist"></div>
+  <nav class="menubar" id="menubar"></nav>
+  <div class="findbar" id="findbar" hidden>
+    <input type="text" id="findInput" placeholder="찾기" aria-label="찾을 내용">
+    <input type="text" id="replaceInput" placeholder="바꾸기" aria-label="바꿀 내용">
+    <button id="findPrev" title="Shift+F3">이전</button>
+    <button id="findNext" title="F3">다음</button>
+    <button id="replaceOne">바꾸기</button>
+    <button id="replaceAll">모두 바꾸기</button>
+    <label><input type="checkbox" id="matchCase"> 대/소문자 구분</label>
+    <span class="msg" id="findMsg"></span>
+    <button id="findClose" aria-label="찾기 닫기">✕</button>
+  </div>
+  <div class="editor" id="editorWrap"><textarea id="ed" spellcheck="false" aria-label="문서 내용"></textarea></div>
+  <div class="preview" id="preview" hidden></div>
+  <div class="status" id="status">
+    <span id="stPos"></span><span id="stChars"></span><span id="stKind">일반 텍스트</span><span id="stZoom"></span><span id="stEol"></span><span id="stEnc"></span>
+  </div>
+</div>
+<input type="file" id="fileInput" multiple hidden>
+<div id="modalRoot"></div>
+
+<script>
+// Same feature set as the WinForms clone (Notepad.cs), modeled on Windows 11 Notepad's
+// TabsBar / MainMenuBar / FindReplaceDialog / GotoDialogContent / StatusBar.
+const $ = id => document.getElementById(id);
+const ed = $('ed');
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+const SAMPLE = '웹 메모장에 오신 것을 환영합니다.\n\n' +
+  '- 파일 > 열기(Ctrl+O)로 텍스트 파일을 열 수 있습니다.\n' +
+  '- 탭: Alt+N 새 탭, Alt+W 탭 닫기 (Ctrl+N/W는 브라우저가 사용합니다)\n' +
+  '- Ctrl+F 찾기, Ctrl+H 바꾸기, Ctrl+G 줄 이동, F5 시간/날짜\n' +
+  '- Ctrl+휠 또는 Ctrl+=/- 로 확대/축소\n\n' +
+  '열린 탭은 이 브라우저에 자동 보관됩니다.';
+
+let state = store.get('np.state', null) || {
+  tabs: [{ id: 1, name: null, text: SAMPLE, dirty: false, enc: 'UTF-8', eol: '\r\n' }], active: 1, nextId: 2
+};
+let settings = Object.assign({ wrap: true, statusBar: true, zoom: 1, theme: 'system' }, store.get('np.settings', {}));
+let recent = store.get('np.recent', []);
+const handles = {}; // File System Access handles (not persisted)
+const undoStacks = {}; // per-tab edit history is native; we keep scroll/selection only
+
+const cur = () => state.tabs.find(t => t.id === state.active);
+const title = t => t.name || '제목 없음';
+const persist = () => { store.set('np.state', state); store.set('np.settings', settings); store.set('np.recent', recent); };
+let persistTimer; const persistSoon = () => { clearTimeout(persistTimer); persistTimer = setTimeout(persist, 400); };
+
+function toast(msg) {
+  const el = document.createElement('div'); el.className = 'toast'; el.textContent = msg;
+  document.body.append(el); setTimeout(() => el.remove(), 2200);
+}
+
+// In-page dialogs (alert/confirm/prompt are unavailable in the artifact viewer)
+function dialog({ title: h, body, input, buttons }) {
+  return new Promise(resolve => {
+    const root = $('modalRoot');
+    root.innerHTML = '';
+    const m = document.createElement('div'); m.className = 'modal';
+    const d = document.createElement('div'); d.className = 'dialog'; d.setAttribute('role', 'dialog');
+    const hh = document.createElement('h2'); hh.textContent = h; d.append(hh);
+    if (body) { const p = document.createElement('p'); p.textContent = body; d.append(p); }
+    let inp;
+    if (input) { inp = document.createElement('input'); Object.assign(inp, input); inp.id = 'dlgInput'; d.append(inp); }
+    const row = document.createElement('div'); row.className = 'row';
+    const close = v => { root.innerHTML = ''; ed.focus(); resolve(v); };
+    buttons.forEach(b => {
+      const bt = document.createElement('button'); bt.textContent = b.label;
+      if (b.primary) bt.className = 'primary';
+      bt.onclick = () => close(inp && b.value !== null ? { button: b.value, value: inp.value } : b.value);
+      row.append(bt);
+    });
+    d.append(row); m.append(d); root.append(m);
+    m.addEventListener('keydown', e => {
+      if (e.key === 'Escape') close(null);
+      if (e.key === 'Enter') { const p = buttons.find(b => b.primary); if (p) close(inp ? { button: p.value, value: inp.value } : p.value); }
+    });
+    (inp || row.querySelector('.primary') || row.firstChild).focus();
+  });
+}
+
+// ---------- tabs ----------
+function renderTabs() {
+  const box = $('tabs'); box.innerHTML = '';
+  const appIcon = document.createElement('div'); appIcon.className = 'appicon'; appIcon.innerHTML = ICON.page; box.append(appIcon);
+  state.tabs.forEach(t => {
+    const el = document.createElement('div');
+    el.className = 'tab' + (t.id === state.active ? ' active' : '');
+    el.setAttribute('role', 'tab'); el.title = title(t);
+    const name = document.createElement('button'); name.className = 'name';
+    name.textContent = title(t); name.onclick = () => switchTab(t.id);
+    const x = document.createElement('button'); x.className = 'x';
+    const show = hover => x.innerHTML = t.dirty && !hover ? '<span class="dot"></span>' : ICON.close;
+    show(false);
+    x.setAttribute('aria-label', title(t) + ' 닫기');
+    el.onmouseenter = () => show(true); el.onmouseleave = () => show(false);
+    x.onclick = e => { e.stopPropagation(); closeTab(t.id); };
+    el.onauxclick = e => { if (e.button === 1) closeTab(t.id); };
+    el.append(name, x); box.append(el);
+  });
+  const add = document.createElement('button'); add.className = 'addtab'; add.innerHTML = ICON.plus;
+  add.title = '새 탭 (Alt+N)'; add.setAttribute('aria-label', '새 탭'); add.onclick = () => newTab(); box.append(add);
+  // Caption buttons like the desktop window: minimize collapses to the title bar, maximize toggles
+  // full screen, close closes every tab (asking to save) and starts fresh
+  const drag = document.createElement('div'); drag.className = 'drag';
+  drag.ondblclick = toggleFullscreen; box.append(drag);
+  const caps = document.createElement('div'); caps.className = 'caps';
+  const full = !!document.fullscreenElement;
+  [[ICON.min, '최소화', toggleCollapse, ''], [full ? ICON.restore : ICON.max, full ? '이전 크기로 복원' : '최대화', toggleFullscreen, ''],
+   [ICON.close, '닫기', closeAll, 'close']].forEach(([icon, label, fn, cls]) => {
+    const b = document.createElement('button'); b.innerHTML = icon; b.title = label; b.setAttribute('aria-label', label);
+    if (cls) b.className = cls; b.onclick = e => { e.stopPropagation(); fn(); }; caps.append(b);
+  });
+  box.append(caps);
+  document.title = title(cur()) + ' - 웹 메모장';
+}
+
+function toggleCollapse() {
+  const app = document.querySelector('.app');
+  app.classList.toggle('collapsed');
+  if (app.classList.contains('collapsed')) toast('탭 줄을 누르면 다시 펼쳐집니다'); else ed.focus();
+}
+$('tabs').addEventListener('click', () => { const app = document.querySelector('.app'); if (app.classList.contains('collapsed')) { app.classList.remove('collapsed'); ed.focus(); } });
+async function toggleFullscreen() {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen();
+  } catch { toast('이 화면에서는 전체 화면을 쓸 수 없습니다'); }
+}
+document.addEventListener('fullscreenchange', () => renderTabs());
+async function closeAll() {
+  for (const t of [...state.tabs]) {
+    if (!state.tabs.includes(t)) continue;
+    const before = state.tabs.length;
+    await closeTab(t.id);
+    if (state.tabs.length === before && state.tabs.includes(t)) return; // cancelled
+  }
+}
+function saveEditorToTab() {
+  const t = cur(); if (!t) return;
+  t.text = ed.value; t.sel = [ed.selectionStart, ed.selectionEnd]; t.scroll = ed.scrollTop;
+}
+function loadTabToEditor() {
+  const t = cur(); ed.value = t.text;
+  const [a, b] = t.sel || [0, 0]; ed.setSelectionRange(a, b); ed.scrollTop = t.scroll || 0;
+  renderTabs(); updateStatus();
+  if (settings.preview) $('preview').innerHTML = renderMarkdown(ed.value); else ed.focus();
+}
+function switchTab(id) { saveEditorToTab(); state.active = id; loadTabToEditor(); persistSoon(); }
+function newTab(props) {
+  saveEditorToTab();
+  const t = Object.assign({ id: state.nextId++, name: null, text: '', dirty: false, enc: 'UTF-8', eol: '\r\n' }, props);
+  state.tabs.push(t); state.active = t.id; loadTabToEditor(); persistSoon(); return t;
+}
+async function closeTab(id) {
+  saveEditorToTab();
+  const t = state.tabs.find(x => x.id === id);
+  if (t.dirty) {
+    state.active = id; loadTabToEditor();
+    const r = await dialog({ title: '메모장', body: title(t) + '의 변경 내용을 저장하시겠습니까?',
+      buttons: [{ label: '저장', value: 'save', primary: true }, { label: '저장 안 함', value: 'discard' }, { label: '취소', value: null }] });
+    if (r === null) return;
+    if (r === 'save' && !(await save(false))) return;
+  }
+  const i = state.tabs.indexOf(t);
+  state.tabs.splice(i, 1); delete handles[id];
+  if (!state.tabs.length) { state.tabs.push({ id: state.nextId++, name: null, text: '', dirty: false, enc: 'UTF-8', eol: '\r\n' }); }
+  if (state.active === id) state.active = state.tabs[Math.min(i, state.tabs.length - 1)].id;
+  loadTabToEditor(); persistSoon();
+}
+
+// ---------- files ----------
+function decode(buf) {
+  const b = new Uint8Array(buf);
+  if (b[0] === 0xEF && b[1] === 0xBB && b[2] === 0xBF) return { text: new TextDecoder('utf-8').decode(b.subarray(3)), enc: 'UTF-8(BOM)' };
+  if (b[0] === 0xFF && b[1] === 0xFE) return { text: new TextDecoder('utf-16le').decode(b.subarray(2)), enc: 'UTF-16 LE' };
+  if (b[0] === 0xFE && b[1] === 0xFF) return { text: new TextDecoder('utf-16be').decode(b.subarray(2)), enc: 'UTF-16 BE' };
+  try { return { text: new TextDecoder('utf-8', { fatal: true }).decode(b), enc: 'UTF-8' }; }
+  catch { return { text: new TextDecoder('euc-kr').decode(b), enc: 'ANSI' }; }
+}
+function encode(text, enc) {
+  if (enc.startsWith('UTF-16')) {
+    const le = enc.endsWith('LE'), out = new Uint8Array(2 + text.length * 2);
+    out.set(le ? [0xFF, 0xFE] : [0xFE, 0xFF]);
+    for (let i = 0; i < text.length; i++) { const c = text.charCodeAt(i); out[2 + i * 2 + (le ? 0 : 1)] = c & 255; out[2 + i * 2 + (le ? 1 : 0)] = c >> 8; }
+    return out;
+  }
+  const body = new TextEncoder().encode(text); // ANSI is saved as UTF-8: browsers cannot encode legacy code pages
+  if (enc !== 'UTF-8(BOM)') return body;
+  const out = new Uint8Array(body.length + 3); out.set([0xEF, 0xBB, 0xBF]); out.set(body, 3); return out;
+}
+async function openBuffer(name, buf, handle) {
+  const existing = state.tabs.find(t => t.name === name && !t.dirty && handle && handles[t.id]);
+  if (existing) { switchTab(existing.id); return; }
+  const { text, enc } = decode(buf);
+  const eol = text.includes('\r\n') ? '\r\n' : text.includes('\n') ? '\n' : text.includes('\r') ? '\r' : '\r\n';
+  const norm = text.replace(/\r\n?/g, '\n');
+  const c = cur();
+  saveEditorToTab();
+  let t;
+  if (c && !c.name && !c.dirty && c.text === '') { Object.assign(c, { name, text: norm, enc, eol, sel: [0, 0], scroll: 0 }); t = c; loadTabToEditor(); }
+  else t = newTab({ name, text: norm, enc, eol });
+  if (handle) handles[t.id] = handle;
+  addRecent(name); renderTabs(); persistSoon();
+}
+async function openFile() {
+  if (window.showOpenFilePicker) {
+    try {
+      const hs = await showOpenFilePicker({ multiple: true });
+      for (const h of hs) { const f = await h.getFile(); await openBuffer(f.name, await f.arrayBuffer(), h); }
+      return;
+    } catch (e) { if (e.name === 'AbortError') return; }
+  }
+  $('fileInput').click();
+}
+$('fileInput').onchange = async e => {
+  for (const f of e.target.files) await openBuffer(f.name, await f.arrayBuffer(), null);
+  e.target.value = '';
+};
+async function save(saveAs) {
+  saveEditorToTab();
+  const t = cur();
+  const data = encode(t.text.replace(/\n/g, t.eol), t.enc);
+  // Inside the Claude artifact viewer: save through the downloads capability
+  const dl = window.claude ? await window.claude.use('downloads') : null;
+  if (dl) {
+    let fname = t.name || '제목 없음.txt';
+    if (!/\.(txt|md|json|csv|html|svg)$/i.test(fname)) fname += '.txt';
+    try {
+      await dl.save({ filename: fname, data: new Blob([data]) });
+      t.name = fname; t.dirty = false; addRecent(t.name); renderTabs(); persistSoon();
+      toast('다운로드했습니다: ' + fname);
+      return true;
+    } catch (e) {
+      if (e && e.code === 'declined') return false;
+      if (e && e.code === 'rate_limited') { toast('잠시 후 다시 저장하세요'); return false; }
+      // otherwise fall through to the copy fallback below
+    }
+  }
+  try {
+    let h = handles[t.id];
+    if (dl === null && window.claude) throw new Error('unavailable');
+    if ((saveAs || !h) && window.showSaveFilePicker) {
+      h = await showSaveFilePicker({ suggestedName: t.name || '제목 없음.txt', types: [{ description: '텍스트 문서', accept: { 'text/plain': ['.txt'] } }] });
+    }
+    if (h) {
+      const w = await h.createWritable(); await w.write(data); await w.close();
+      handles[t.id] = h; t.name = h.name;
+    } else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([data], { type: 'text/plain' }));
+      a.download = t.name || '제목 없음.txt'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      t.name = a.download;
+    }
+    t.dirty = false; addRecent(t.name); renderTabs(); persistSoon(); toast('저장했습니다: ' + t.name);
+    return true;
+  } catch (e) {
+    if (e.name === 'AbortError') return false;
+    const r = await dialog({ title: '이 화면에서는 파일로 저장할 수 없습니다',
+      body: '브라우저가 이 페이지의 파일 저장을 막았습니다. 내용은 이 브라우저에 자동 보관되어 있습니다. 클립보드로 복사해서 다른 곳에 붙여넣을 수 있습니다.',
+      buttons: [{ label: '전체 복사', value: 'copy', primary: true }, { label: '닫기', value: null }] });
+    if (r === 'copy') copyText(t.text.replace(/\n/g, t.eol));
+    return false;
+  }
+}
+function copyText(s) {
+  navigator.clipboard.writeText(s).then(() => toast('클립보드에 복사했습니다'), () => { ed.select(); toast('Ctrl+C를 눌러 복사하세요'); });
+}
+function addRecent(name) { recent = [name, ...recent.filter(n => n !== name)].slice(0, 10); }
+
+// ---------- status ----------
+function updateStatus() {
+  const t = cur(), v = ed.value, s = ed.selectionStart, e = ed.selectionEnd;
+  const before = v.slice(0, s), line = before.split('\n').length, col = s - before.lastIndexOf('\n');
+  $('stPos').textContent = `줄 ${line}, 열 ${col}`;
+  $('stChars').textContent = e > s ? `${e - s}/${v.length}자` : `${v.length}자`;
+  $('stKind').textContent = /\.md$/i.test(t.name || '') ? 'Markdown' : '일반 텍스트';
+  $('stZoom').textContent = Math.round(settings.zoom * 100) + '%';
+  $('stEol').textContent = t.eol === '\r\n' ? 'Windows (CRLF)' : t.eol === '\n' ? 'Unix (LF)' : 'Macintosh (CR)';
+  $('stEnc').textContent = t.enc;
+}
+ed.addEventListener('input', () => {
+  const t = cur(); t.text = ed.value;
+  if (!t.dirty) { t.dirty = true; renderTabs(); }
+  updateStatus(); persistSoon();
+});
+['keyup', 'click', 'select'].forEach(ev => ed.addEventListener(ev, updateStatus));
+document.addEventListener('selectionchange', () => { if (document.activeElement === ed) updateStatus(); });
+
+// ---------- view ----------
+function applySettings() {
+  ed.classList.toggle('nowrap', !settings.wrap);
+  ed.style.fontSize = (15 * settings.zoom) + 'px';
+  $('status').hidden = !settings.statusBar;
+  if (settings.theme === 'system') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', settings.theme);
+  updateStatus(); persistSoon();
+}
+const setZoom = z => { settings.zoom = Math.round(Math.min(5, Math.max(0.1, z)) * 10) / 10; applySettings(); };
+ed.addEventListener('wheel', e => { if (e.ctrlKey) { e.preventDefault(); setZoom(settings.zoom + (e.deltaY < 0 ? 0.1 : -0.1)); } }, { passive: false });
+
+// ---------- find / replace / goto ----------
+let lastFind = '';
+function showFind(replace) {
+  $('findbar').hidden = false;
+  $('replaceInput').hidden = $('replaceOne').hidden = $('replaceAll').hidden = !replace;
+  const sel = ed.value.slice(ed.selectionStart, ed.selectionEnd);
+  if (sel && !sel.includes('\n')) $('findInput').value = sel;
+  $('findMsg').textContent = '';
+  $('findInput').focus(); $('findInput').select();
+}
+function findNext(forward) {
+  const q = $('findInput').value || lastFind; lastFind = q;
+  if (!q) { showFind(false); return false; }
+  const mc = $('matchCase').checked, hay = mc ? ed.value : ed.value.toLowerCase(), n = mc ? q : q.toLowerCase();
+  let i;
+  if (forward) { i = hay.indexOf(n, ed.selectionEnd); if (i < 0) i = hay.indexOf(n); }
+  else { i = ed.selectionStart > 0 ? hay.lastIndexOf(n, ed.selectionStart - 1) : -1; if (i < 0) i = hay.lastIndexOf(n); }
+  if (i < 0) { $('findMsg').textContent = `"${q}"을(를) 찾을 수 없습니다.`; return false; }
+  $('findMsg').textContent = '';
+  ed.focus(); ed.setSelectionRange(i, i + q.length);
+  const lines = ed.value.slice(0, i).split('\n').length;
+  ed.scrollTop = Math.max(0, (lines - 5) * parseFloat(getComputedStyle(ed).lineHeight));
+  updateStatus(); return true;
+}
+function setText(v, selStart, selEnd) {
+  // execCommand keeps the native undo stack where supported
+  ed.focus(); ed.select();
+  if (!document.execCommand('insertText', false, v)) { ed.value = v; ed.dispatchEvent(new Event('input')); }
+  ed.setSelectionRange(selStart, selEnd);
+}
+$('findNext').onclick = () => findNext(true);
+$('findPrev').onclick = () => findNext(false);
+$('replaceOne').onclick = () => {
+  const q = $('findInput').value, sel = ed.value.slice(ed.selectionStart, ed.selectionEnd);
+  const mc = $('matchCase').checked;
+  if (q && (mc ? sel === q : sel.toLowerCase() === q.toLowerCase())) {
+    ed.focus();
+    if (!document.execCommand('insertText', false, $('replaceInput').value)) {
+      ed.setRangeText($('replaceInput').value, ed.selectionStart, ed.selectionEnd, 'end'); ed.dispatchEvent(new Event('input'));
+    }
+  }
+  findNext(true);
+};
+$('replaceAll').onclick = () => {
+  const q = $('findInput').value; if (!q) return;
+  const esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(esc, $('matchCase').checked ? 'g' : 'gi');
+  const count = (ed.value.match(re) || []).length;
+  if (!count) { $('findMsg').textContent = `"${q}"을(를) 찾을 수 없습니다.`; return; }
+  const r = $('replaceInput').value;
+  setText(ed.value.replace(re, () => r), 0, 0);
+  toast(`${count}개를 바꿨습니다`);
+};
+$('findClose').onclick = () => { $('findbar').hidden = true; ed.focus(); };
+$('findInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); findNext(!e.shiftKey); $('findInput').focus(); }
+  if (e.key === 'Escape') $('findClose').click();
+});
+$('replaceInput').addEventListener('keydown', e => { if (e.key === 'Escape') $('findClose').click(); });
+
+async function gotoLine() {
+  const total = ed.value.split('\n').length, curLine = ed.value.slice(0, ed.selectionStart).split('\n').length;
+  const r = await dialog({ title: '줄 이동', input: { type: 'number', min: 1, max: total, value: curLine, ariaLabel: '줄 번호' },
+    buttons: [{ label: '이동', value: 'go', primary: true }, { label: '취소', value: null }] });
+  if (!r) return;
+  const n = parseInt(r.value, 10);
+  if (!(n >= 1 && n <= total)) { toast(`1에서 ${total} 사이의 줄 번호를 입력하세요`); return; }
+  const pos = ed.value.split('\n').slice(0, n - 1).reduce((a, l) => a + l.length + 1, 0);
+  ed.setSelectionRange(pos, pos);
+  ed.scrollTop = Math.max(0, (n - 5) * parseFloat(getComputedStyle(ed).lineHeight));
+  updateStatus();
+}
+function insertDate() {
+  const d = new Date(), h = d.getHours();
+  const s = `${h < 12 ? '오전' : '오후'} ${(h % 12) || 12}:${String(d.getMinutes()).padStart(2, '0')} ` +
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  ed.focus();
+  if (!document.execCommand('insertText', false, s)) { ed.setRangeText(s, ed.selectionStart, ed.selectionEnd, 'end'); ed.dispatchEvent(new Event('input')); }
+}
+
+// ---------- menus ----------
+const MENUS = () => [
+  ['파일', [
+    ['새 탭', 'Alt+N', () => newTab()],
+    ['열기...', 'Ctrl+O', openFile],
+    ['최근 파일', '', null, 'recent'],
+    '-',
+    ['저장', 'Ctrl+S', () => save(false)],
+    ['다른 이름으로 저장...', 'Ctrl+Shift+S', () => save(true)],
+    ['전체 복사', '', () => copyText(ed.value.replace(/\n/g, cur().eol))],
+    '-',
+    ['탭 닫기', 'Alt+W', () => closeTab(state.active)],
+  ]],
+  ['편집', [
+    ['실행 취소', 'Ctrl+Z', () => { ed.focus(); document.execCommand('undo'); }],
+    ['다시 실행', 'Ctrl+Y', () => { ed.focus(); document.execCommand('redo'); }],
+    '-',
+    ['잘라내기', 'Ctrl+X', () => { ed.focus(); document.execCommand('cut'); }],
+    ['복사', 'Ctrl+C', () => { ed.focus(); document.execCommand('copy'); }],
+    ['붙여넣기', 'Ctrl+V', () => toast('Ctrl+V를 눌러 붙여넣으세요')],
+    '-',
+    ['찾기...', 'Ctrl+F', () => showFind(false)],
+    ['다음 찾기', 'F3', () => findNext(true)],
+    ['이전 찾기', 'Shift+F3', () => findNext(false)],
+    ['바꾸기...', 'Ctrl+H', () => showFind(true)],
+    ['이동...', 'Ctrl+G', gotoLine],
+    '-',
+    ['모두 선택', 'Ctrl+A', () => { ed.focus(); ed.select(); }],
+    ['시간/날짜', 'F5', insertDate],
+  ]],
+  ['보기', [
+    ['확대', 'Ctrl+=', () => setZoom(settings.zoom + 0.1)],
+    ['축소', 'Ctrl+-', () => setZoom(settings.zoom - 0.1)],
+    ['기본 확대/축소 복원', 'Ctrl+0', () => setZoom(1)],
+    '-',
+    ['상태 표시줄', '', () => { settings.statusBar = !settings.statusBar; applySettings(); }, settings.statusBar],
+    ['자동 줄 바꿈', '', () => { settings.wrap = !settings.wrap; applySettings(); }, settings.wrap],
+    '-',
+    ['테마: 시스템 설정', '', () => { settings.theme = 'system'; applySettings(); }, settings.theme === 'system'],
+    ['테마: 밝게', '', () => { settings.theme = 'light'; applySettings(); }, settings.theme === 'light'],
+    ['테마: 어둡게', '', () => { settings.theme = 'dark'; applySettings(); }, settings.theme === 'dark'],
+  ]],
+];
+let openMenu = null;
+function closeMenus() { if (openMenu) { openMenu.remove(); openMenu = null; } document.querySelectorAll('.menubtn').forEach(b => b.setAttribute('aria-expanded', 'false')); }
+function renderMenubar() {
+  const bar = $('menubar'); bar.innerHTML = '';
+  MENUS().forEach(([label], idx) => {
+    const wrap = document.createElement('div');
+    const b = document.createElement('button'); b.className = 'menubtn'; b.textContent = label;
+    b.setAttribute('aria-haspopup', 'true'); b.setAttribute('aria-expanded', 'false');
+    b.onclick = e => { e.stopPropagation(); const was = b.getAttribute('aria-expanded') === 'true'; closeMenus(); if (!was) showMenu(wrap, b, idx); };
+    b.onmouseenter = () => { if (openMenu && b.getAttribute('aria-expanded') !== 'true') { closeMenus(); showMenu(wrap, b, idx); } };
+    wrap.append(b); bar.append(wrap);
+  });
+  const gap = document.createElement('div'); gap.className = 'gap'; bar.append(gap);
+  bar.append(buildFormatBar());
+  const sp = document.createElement('div'); sp.className = 'spacer'; bar.append(sp);
+  bar.append(buildRightBar());
+}
+
+// ---------- formatting (Notepad stores formatting as Markdown) ----------
+// Line icons drawn to match Segoe Fluent Icons' 16px grid
+const svg = (d, cls = 'i') => `<svg class="${cls}" viewBox="0 0 16 16" aria-hidden="true">${d}</svg>`;
+const ICON = {
+  page: svg('<path d="M4 1.5h5.5L13 5v9.5H4z"/><path d="M9.5 1.5V5H13"/><path d="M6 8h5M6 10.5h5M6 13h3"/>'),
+  plus: svg('<path d="M8 2v12M2 8h12"/>'),
+  close: svg('<path d="M3 3l10 10M13 3L3 13"/>'),
+  min: svg('<path d="M2 8h12"/>'),
+  max: svg('<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/>'),
+  restore: svg('<rect x="2.5" y="4.5" width="9" height="9" rx="1.5"/><path d="M5 2.5h6.5a2 2 0 0 1 2 2V11"/>'),
+  list: svg('<path d="M6 4h8M6 8h8M6 12h8"/><circle cx="2.75" cy="4" r=".75" fill="currentColor"/><circle cx="2.75" cy="8" r=".75" fill="currentColor"/><circle cx="2.75" cy="12" r=".75" fill="currentColor"/>'),
+  italic: svg('<path d="M7 2.5h6M3 13.5h6M10 2.5l-4 11"/>'),
+  strike: svg('<path d="M2 8h12"/><path d="M11.5 4.2C11 3 9.8 2.5 8.2 2.5 6 2.5 4.6 3.6 4.6 5.1c0 1.1.6 1.9 2 2.4"/><path d="M5 11.5c.5 1.3 1.8 2 3.4 2 2.1 0 3.6-1 3.6-2.6 0-.9-.4-1.6-1.2-2.1"/>'),
+  link: svg('<path d="M6.5 4.5H5a3.5 3.5 0 0 0 0 7h1.5M9.5 4.5H11a3.5 3.5 0 0 1 0 7H9.5M5.5 8h5"/>'),
+  table: svg('<rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M2 6.5h12M2 10h12M6.5 2v12M10 2v12"/>'),
+  clear: svg('<path d="M3 13.5L7 2.5h1l2.2 6"/><path d="M4.6 9.5h4.2"/><path d="M10.5 10.5l3 3M13.5 10.5l-3 3"/>'),
+  eye: svg('<path d="M1.5 8.5C2.7 5.6 5.1 3.5 8 3.5s5.3 2.1 6.5 5"/><circle cx="8" cy="9.5" r="2.5"/>'),
+  gear: svg('<circle cx="8" cy="8" r="2"/><path d="M6.9 1.5h2.2l.4 1.9 1.4.8 1.8-.6 1.1 1.9-1.4 1.3v1.6l1.4 1.3-1.1 1.9-1.8-.6-1.4.8-.4 1.9H6.9l-.4-1.9-1.4-.8-1.8.6-1.1-1.9 1.4-1.3V7.2L2.2 5.9l1.1-1.9 1.8.6 1.4-.8z"/>'),
+  chev: svg('<path d="M3 6l5 5 5-5"/>', 'i chev')
+};
+function fbtn(html, label, fn, cls) {
+  const b = document.createElement('button'); b.className = 'fbtn' + (cls ? ' ' + cls : '');
+  b.innerHTML = html; b.title = label; b.setAttribute('aria-label', label);
+  b.onclick = e => { e.stopPropagation(); closeMenus(); fn(b); };
+  return b;
+}
+function dropdown(btnHtml, label, items) {
+  const wrap = document.createElement('div');
+  const b = fbtn(btnHtml + ICON.chev, label, () => {});
+  b.setAttribute('aria-haspopup', 'true'); b.setAttribute('aria-expanded', 'false');
+  b.onclick = e => {
+    e.stopPropagation(); const was = b.getAttribute('aria-expanded') === 'true'; closeMenus(); if (was) return;
+    const m = document.createElement('div'); m.className = 'menu'; m.setAttribute('role', 'menu');
+    items.forEach(([t, key, fn]) => {
+      const it = document.createElement('button'); it.setAttribute('role', 'menuitem');
+      const s = document.createElement('span'); s.textContent = t; const k = document.createElement('kbd'); k.textContent = key || '';
+      it.append(s, k); it.onclick = () => { closeMenus(); fn(); }; m.append(it);
+    });
+    wrap.append(m); openMenu = m; b.setAttribute('aria-expanded', 'true'); m.querySelector('button').focus();
+  };
+  wrap.append(b); return wrap;
+}
+function buildFormatBar() {
+  const f = document.createElement('div'); f.className = 'fmt';
+  f.append(
+    dropdown('<span>H1</span>', '제목', [['본문', '', () => setHeading(0)], ...[1, 2, 3, 4, 5, 6].map(n => ['제목 ' + n, '#'.repeat(n), () => setHeading(n)])]),
+    dropdown(ICON.list, '목록', [['글머리 기호 목록', '', () => toggleLinePrefix('- ')], ['번호 매기기 목록', '', () => toggleLinePrefix('1. ')], ['할 일 목록', '', () => toggleLinePrefix('- [ ] ')]]),
+    fbtn('<b>B</b>', '굵게 (Ctrl+B)', () => wrapSel('**')),
+    fbtn(ICON.italic, '기울임꼴 (Ctrl+I)', () => wrapSel('*')),
+    fbtn(ICON.strike, '취소선', () => wrapSel('~~')),
+    fbtn(ICON.link, '링크 (Ctrl+K)', insertLink),
+    dropdown(ICON.table, '표 및 기타 서식', [
+      ['표 삽입', '', insertTable],
+      ['인라인 코드', '', () => wrapSel('`')],
+      ['코드 블록', '', () => wrapSel('```\n', '\n```')],
+      ['인용', '', () => toggleLinePrefix('> ')],
+      ['가로줄', '', () => insertText('\n\n---\n\n')],
+    ]),
+    fbtn(ICON.clear, '서식 지우기', clearFormatting),
+  );
+  return f;
+}
+function buildRightBar() {
+  const f = document.createElement('div'); f.className = 'fmt right';
+  const pv = fbtn(ICON.eye, '서식 미리 보기 (Ctrl+Shift+M)', togglePreview);
+  pv.id = 'pvBtn'; pv.setAttribute('aria-pressed', String(!!settings.preview));
+  f.append(pv, fbtn(ICON.gear, '설정', openSettings));
+  return f;
+}
+function insertText(s) {
+  ed.focus();
+  if (!document.execCommand('insertText', false, s)) { ed.setRangeText(s, ed.selectionStart, ed.selectionEnd, 'end'); ed.dispatchEvent(new Event('input')); }
+}
+function replaceRange(a, b, s, selA, selB) {
+  ed.focus(); ed.setSelectionRange(a, b); insertText(s); ed.setSelectionRange(selA, selB); updateStatus();
+}
+function wrapSel(open, close = open) {
+  if (settings.preview) togglePreview();
+  const v = ed.value, a = ed.selectionStart, b = ed.selectionEnd, sel = v.slice(a, b);
+  if (v.slice(a - open.length, a) === open && v.slice(b, b + close.length) === close) // unwrap
+    return replaceRange(a - open.length, b + close.length, sel, a - open.length, b - open.length);
+  if (sel.startsWith(open) && sel.endsWith(close) && sel.length >= open.length + close.length)
+    return replaceRange(a, b, sel.slice(open.length, sel.length - close.length), a, b - open.length - close.length);
+  replaceRange(a, b, open + sel + close, a + open.length, b + open.length);
+}
+function lineRange() {
+  const v = ed.value, a = v.lastIndexOf('\n', ed.selectionStart - 1) + 1;
+  let b = v.indexOf('\n', Math.max(ed.selectionEnd - (ed.selectionEnd > ed.selectionStart && v[ed.selectionEnd - 1] === '\n' ? 1 : 0), ed.selectionStart));
+  if (b < 0) b = v.length;
+  return [a, b];
+}
+function toggleLinePrefix(prefix) {
+  if (settings.preview) togglePreview();
+  const [a, b] = lineRange(), lines = ed.value.slice(a, b).split('\n');
+  const strip = l => l.replace(/^(\s*)([-*+] \[[ xX]\] |[-*+] |\d+\. |> )/, '$1');
+  const has = l => prefix === '1. ' ? /^\s*\d+\. /.test(l) : l.trimStart().startsWith(prefix);
+  const all = lines.every(has);
+  const out = lines.map((l, i) => all ? strip(l) : (prefix === '1. ' ? (i + 1) + '. ' : prefix) + strip(l)).join('\n');
+  replaceRange(a, b, out, a, a + out.length);
+}
+function setHeading(n) {
+  if (settings.preview) togglePreview();
+  const [a, b] = lineRange();
+  const out = ed.value.slice(a, b).split('\n').map(l => (n ? '#'.repeat(n) + ' ' : '') + l.replace(/^#{1,6}\s+/, '')).join('\n');
+  replaceRange(a, b, out, a + out.length, a + out.length);
+}
+async function insertLink() {
+  if (settings.preview) togglePreview();
+  const a = ed.selectionStart, b = ed.selectionEnd, sel = ed.value.slice(a, b);
+  const r = await dialog({ title: '링크 삽입', body: sel ? `"${sel}"에 연결할 주소` : '연결할 주소', input: { type: 'url', placeholder: 'https://', ariaLabel: '주소' },
+    buttons: [{ label: '삽입', value: 'ok', primary: true }, { label: '취소', value: null }] });
+  if (!r || !r.value.trim()) return;
+  const url = r.value.trim(), text = sel || url;
+  replaceRange(a, b, `[${text}](${url})`, a + 1, a + 1 + text.length);
+}
+async function insertTable() {
+  if (settings.preview) togglePreview();
+  const r = await dialog({ title: '표 삽입', body: '열 x 행 (예: 3x2)', input: { type: 'text', value: '3x2', ariaLabel: '표 크기' },
+    buttons: [{ label: '삽입', value: 'ok', primary: true }, { label: '취소', value: null }] });
+  if (!r) return;
+  const m = r.value.match(/(\d+)\s*[xX×*]\s*(\d+)/);
+  if (!m) { toast('3x2처럼 열과 행 수를 입력하세요'); return; }
+  const c = Math.min(+m[1], 12), rows = Math.min(+m[2], 50);
+  const row = cells => '| ' + cells.join(' | ') + ' |';
+  const t = [row(Array.from({ length: c }, (_, i) => '제목 ' + (i + 1))), row(Array(c).fill('---')),
+    ...Array.from({ length: rows }, () => row(Array(c).fill('   ')))].join('\n');
+  insertText('\n' + t + '\n');
+}
+function clearFormatting() {
+  if (settings.preview) togglePreview();
+  const a = ed.selectionStart, b = ed.selectionEnd;
+  if (a === b) { toast('서식을 지울 텍스트를 선택하세요'); return; }
+  const out = ed.value.slice(a, b)
+    .replace(/^#{1,6}\s+/gm, '').replace(/^(\s*)([-*+] \[[ xX]\] |[-*+] |\d+\. |> )/gm, '$1')
+    .replace(/\*\*(.+?)\*\*/g, '$1').replace(/~~(.+?)~~/g, '$1').replace(/\*(.+?)\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1').replace(/\[([^\]]*)\]\(([^)]*)\)/g, '$1');
+  replaceRange(a, b, out, a, a + out.length);
+}
+
+// Small Markdown renderer for the preview; all text is escaped, only http(s)/mailto links survive
+function esc(s) { return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function inline(s) {
+  const codes = [];
+  s = esc(s).replace(/`([^`]+)`/g, (_, c) => { codes.push(c); return '\u0000' + (codes.length - 1) + '\u0000'; });
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, t, u) => /^(https?:|mailto:)/i.test(u) ? `<a href="${u}" target="_blank" rel="noopener">${t}</a>` : t)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/~~(.+?)~~/g, '<del>$1</del>')
+    .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
+  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => '<code>' + codes[i] + '</code>');
+}
+function renderMarkdown(src) {
+  const lines = src.split('\n'), out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^```/.test(l)) { const buf = []; while (++i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i]); out.push('<pre><code>' + esc(buf.join('\n')) + '</code></pre>'); continue; }
+    let m;
+    if ((m = l.match(/^(#{1,6})\s+(.*)/))) { out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`); continue; }
+    if (/^\s*(---|\*\*\*)\s*$/.test(l)) { out.push('<hr>'); continue; }
+    if (/^\|.*\|\s*$/.test(l) && /^\|[\s\-:|]+\|\s*$/.test(lines[i + 1] || '')) {
+      const cells = r => r.trim().slice(1, -1).split('|').map(c => inline(c.trim()));
+      let h = '<table><thead><tr>' + cells(l).map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>'; i++;
+      while (i + 1 < lines.length && /^\|.*\|\s*$/.test(lines[i + 1])) h += '<tr>' + cells(lines[++i]).map(c => `<td>${c}</td>`).join('') + '</tr>';
+      out.push(h + '</tbody></table>'); continue;
+    }
+    if (/^\s*([-*+]|\d+\.) /.test(l)) {
+      const ordered = /^\s*\d+\./.test(l), items = [];
+      while (i < lines.length && /^\s*([-*+]|\d+\.) /.test(lines[i])) {
+        let t = lines[i].replace(/^\s*([-*+]|\d+\.) /, '');
+        const task = t.match(/^\[([ xX])\] (.*)/);
+        items.push('<li>' + (task ? `<input type="checkbox" disabled${task[1] !== ' ' ? ' checked' : ''}> ` + inline(task[2]) : inline(t)) + '</li>'); i++;
+      }
+      i--; out.push((ordered ? '<ol>' : '<ul>') + items.join('') + (ordered ? '</ol>' : '</ul>')); continue;
+    }
+    if (/^>\s?/.test(l)) { const buf = []; while (i < lines.length && /^>\s?/.test(lines[i])) buf.push(inline(lines[i++].replace(/^>\s?/, ''))); i--; out.push('<blockquote>' + buf.join('<br>') + '</blockquote>'); continue; }
+    if (!l.trim()) continue;
+    const buf = [inline(l)]; while (i + 1 < lines.length && lines[i + 1].trim() && !/^(#|```|>|\s*([-*+]|\d+\.) |\|)/.test(lines[i + 1])) buf.push(inline(lines[++i]));
+    out.push('<p>' + buf.join('<br>') + '</p>');
+  }
+  return out.join('\n');
+}
+function togglePreview() {
+  settings.preview = !settings.preview;
+  showPreviewState(); persistSoon();
+}
+function showPreviewState() {
+  const on = !!settings.preview;
+  if (on) $('preview').innerHTML = renderMarkdown(ed.value);
+  $('preview').hidden = !on; $('editorWrap').hidden = on;
+  const b = $('pvBtn'); if (b) b.setAttribute('aria-pressed', String(on));
+  if (!on) ed.focus();
+}
+async function openSettings() {
+  const r = await dialog({ title: '설정', body: `테마: ${{ system: '시스템 설정', light: '밝게', dark: '어둡게' }[settings.theme]} · 자동 줄 바꿈: ${settings.wrap ? '켬' : '끔'} · 상태 표시줄: ${settings.statusBar ? '켬' : '끔'}`,
+    buttons: [{ label: '테마 바꾸기', value: 'theme' }, { label: '줄 바꿈 전환', value: 'wrap' }, { label: '상태 표시줄 전환', value: 'status' }, { label: '닫기', value: null, primary: true }] });
+  if (r === 'theme') settings.theme = { system: 'light', light: 'dark', dark: 'system' }[settings.theme];
+  if (r === 'wrap') settings.wrap = !settings.wrap;
+  if (r === 'status') settings.statusBar = !settings.statusBar;
+  if (r) { applySettings(); openSettings(); }
+}
+function showMenu(wrap, btn, idx) {
+  const items = MENUS()[idx][1];
+  const m = document.createElement('div'); m.className = 'menu'; m.setAttribute('role', 'menu');
+  items.forEach(it => {
+    if (it === '-') { m.append(document.createElement('hr')); return; }
+    const [label, key, fn, extra] = it;
+    if (extra === 'recent') {
+      const head = document.createElement('div'); head.className = 'empty'; head.textContent = '최근 파일';
+      m.append(head);
+      if (!recent.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = ' 없음'; m.append(e); }
+      recent.forEach(n => {
+        const b = document.createElement('button'); b.setAttribute('role', 'menuitem');
+        const s = document.createElement('span'); s.textContent = ' ' + n; b.append(s);
+        b.onclick = () => { closeMenus(); const t = state.tabs.find(t => t.name === n); if (t) switchTab(t.id); else { toast('이 파일은 다시 열어야 합니다'); openFile(); } };
+        m.append(b);
+      });
+      return;
+    }
+    const b = document.createElement('button'); b.setAttribute('role', 'menuitem');
+    const s = document.createElement('span'); s.textContent = label;
+    if (typeof extra === 'boolean') s.className = extra ? 'check' : 'nocheck';
+    const k = document.createElement('kbd'); k.textContent = key;
+    b.append(s, k); b.onclick = () => { closeMenus(); fn(); };
+    m.append(b);
+  });
+  wrap.append(m); openMenu = m; btn.setAttribute('aria-expanded', 'true');
+  m.querySelector('button')?.focus();
+}
+document.addEventListener('click', e => { if (openMenu && !openMenu.contains(e.target)) closeMenus(); });
+
+// ---------- keyboard ----------
+document.addEventListener('keydown', e => {
+  if ($('modalRoot').firstChild) return;
+  const k = e.key.toLowerCase(), c = e.ctrlKey || e.metaKey;
+  const act = (fn) => { e.preventDefault(); closeMenus(); fn(); };
+  if (e.key === 'Escape' && openMenu) return act(() => {});
+  if (c && !e.shiftKey && k === 's') return act(() => save(false));
+  if (c && e.shiftKey && k === 's') return act(() => save(true));
+  if (c && k === 'o') return act(openFile);
+  if (c && !e.shiftKey && k === 'b') return act(() => wrapSel('**'));
+  if (c && !e.shiftKey && k === 'i') return act(() => wrapSel('*'));
+  if (c && !e.shiftKey && k === 'k') return act(insertLink);
+  if (c && e.shiftKey && k === 'm') return act(togglePreview);
+  if (c && k === 'f') return act(() => showFind(false));
+  if (c && k === 'h') return act(() => showFind(true));
+  if (c && k === 'g') return act(gotoLine);
+  if (c && (k === '=' || k === '+')) return act(() => setZoom(settings.zoom + 0.1));
+  if (c && k === '-') return act(() => setZoom(settings.zoom - 0.1));
+  if (c && k === '0') return act(() => setZoom(1));
+  if (e.altKey && k === 'n') return act(() => newTab());
+  if (e.altKey && k === 'w') return act(() => closeTab(state.active));
+  if (e.key === 'F3') return act(() => findNext(!e.shiftKey));
+  if (e.key === 'F5') return act(insertDate);
+  if (e.key === 'Tab' && document.activeElement === ed) {
+    e.preventDefault();
+    if (!document.execCommand('insertText', false, '\t')) { ed.setRangeText('\t', ed.selectionStart, ed.selectionEnd, 'end'); ed.dispatchEvent(new Event('input')); }
+  }
+});
+window.addEventListener('beforeunload', () => { saveEditorToTab(); persist(); });
+
+// Drag and drop files onto the editor
+ed.addEventListener('dragover', e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); });
+ed.addEventListener('drop', async e => {
+  if (!e.dataTransfer.files.length) return;
+  e.preventDefault();
+  for (const f of e.dataTransfer.files) await openBuffer(f.name, await f.arrayBuffer(), null);
+});
+
+renderMenubar();
+applySettings();
+loadTabToEditor();
+showPreviewState();
+</script>

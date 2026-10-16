@@ -679,6 +679,25 @@ function unwrapIn(t, s, e, open) { // edit that removes `open` around t[s, e), o
   }
   return null;
 }
+// Inline markers stop at a line break, so a multi-line selection is wrapped line by line, after
+// any list/heading/quote prefix. If every line already has the marker, it's removed from all.
+function wrapLines(a, b, open) {
+  const lineWrap = c => { // unwrap edit for a line's content, or null
+    const P = markerRuns(c, 0, 1).reduce((x, r) => x + r.n, 0), T = markerRuns(c, c.length - 1, -1).reduce((x, r) => x + r.n, 0);
+    return c.length > P + T ? unwrapIn(c, P, c.length - T, open) : null;
+  };
+  const parts = ed.value.slice(a, b).split('\n').map(l => {
+    const p = /^(\s*(?:#{1,6}\s+|[-*+] \[[ xX]\] |[-*+] |\d+\. |> )?\s*)(.*?)(\s*)$/.exec(l);
+    return { pre: p[1], c: p[2], post: p[3] };
+  });
+  const all = parts.some(p => p.c) && parts.every(p => !p.c || lineWrap(p.c));
+  const out = parts.map(({ pre, c, post }) => {
+    if (c && all) { const u = lineWrap(c); c = c.slice(0, u.from) + u.str + c.slice(u.to); }
+    else if (c && !lineWrap(c)) c = open + c + open;
+    return pre + c + post;
+  }).join('\n');
+  replaceRange(a, b, out, a, a + out.length);
+}
 function wrapSel(open, close = open) {
   if (settings.preview) togglePreview();
   const v = ed.value;
@@ -689,6 +708,7 @@ function wrapSel(open, close = open) {
   }
   const sel = v.slice(a, b);
   const ch = open[0], m = open.length;
+  if (open === close && MARKS.includes(ch) && sel.includes('\n')) return wrapLines(a, b, open);
   if (open === close && MARKS.includes(ch) && open === ch.repeat(m)) {
     let u = unwrapIn(v, a, b, open); // markers around the selection
     if (u) return replaceRange(u.from, u.to, u.str, a - m, b - m);

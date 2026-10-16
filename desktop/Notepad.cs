@@ -1062,6 +1062,33 @@ namespace NotepadClone
             return false;
         }
 
+        static readonly Regex LineParts = new Regex(@"^(\s*(?:#{1,6}\s+|[-*+] \[[ xX]\] |[-*+] |\d+\. |> )?\s*)(.*?)(\s*)$");
+
+        // Unwrap edit for one line's content, or false if `open` isn't around it
+        static bool LineWrapped(string c, string open, out int from, out int to, out string str)
+        {
+            from = to = 0; str = null;
+            int P = MarkerRuns(c, 0, 1).Sum(r => r.Value), T = MarkerRuns(c, c.Length - 1, -1).Sum(r => r.Value);
+            return c.Length > P + T && UnwrapIn(c, P, c.Length - T, open, out from, out to, out str);
+        }
+
+        // Inline markers stop at a line break, so a multi-line selection is wrapped line by line, after
+        // any list/heading/quote prefix. If every line already has the marker, it's removed from all.
+        void WrapLines(int a, int len, string open)
+        {
+            var b = Cur.Box; int from, to; string str;
+            var parts = b.Text.Substring(a, len).Split('\n').Select(l => LineParts.Match(l)).ToList();
+            bool all = parts.Any(p => p.Groups[2].Length > 0) && parts.All(p => p.Groups[2].Length == 0 || LineWrapped(p.Groups[2].Value, open, out from, out to, out str));
+            string outText = string.Join("\n", parts.Select(p =>
+            {
+                string c = p.Groups[2].Value;
+                if (c.Length > 0 && all) { LineWrapped(c, open, out from, out to, out str); c = c.Substring(0, from) + str + c.Substring(to); }
+                else if (c.Length > 0 && !LineWrapped(c, open, out from, out to, out str)) c = open + c + open;
+                return p.Groups[1].Value + c + p.Groups[3].Value;
+            }));
+            b.Select(a, len); b.SelectedText = outText; b.Select(a, outText.Length); b.Focus();
+        }
+
         void WrapSel(string open, string close)
         {
             EnsureEditing();
@@ -1074,6 +1101,7 @@ namespace NotepadClone
             }
             string sel = b.SelectedText;
             char ch = open[0]; int m = open.Length;
+            if (open == close && Marks.IndexOf(ch) >= 0 && sel.Contains("\n")) { WrapLines(a, len, open); return; }
             if (open == close && Marks.IndexOf(ch) >= 0 && open == new string(ch, m))
             {
                 int from, to; string str;

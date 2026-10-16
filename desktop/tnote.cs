@@ -66,25 +66,52 @@ namespace TNote
             g.TextRenderingHint = hint;
         }
 
-        // The T series mark: a rounded square outline with a bold T inside (MakeIcon.cs draws tnote.ico the same way)
-        public static void Mark(Graphics g, RectangleF r, Color c)
+        // The T series mark: a rounded square with a bold T, and a pencil over its lower right corner with a
+        // clear gap around it (MakeIcon.cs draws tnote.ico the same way). Drawn on its own bitmap so the gap is transparent.
+        public static Bitmap MarkBitmap(int s, Color c)
         {
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            float s = Math.Min(r.Width, r.Height), w = s * 0.11f, x = r.X + (r.Width - s) / 2, y = r.Y + (r.Height - s) / 2;
-            var box = new RectangleF(x + w / 2 + s * 0.03f, y + w / 2 + s * 0.03f, s - w - s * 0.06f, s - w - s * 0.06f);
-            float d = s * 0.38f;
-            using (var path = new GraphicsPath())
-            using (var pen = new Pen(c, w))
+            var bmp = new Bitmap(s, s, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (var g = Graphics.FromImage(bmp))
             using (var b = new SolidBrush(c))
+            using (var clear = new SolidBrush(Color.Transparent))
             {
-                path.AddArc(box.X, box.Y, d, d, 180, 90); path.AddArc(box.Right - d, box.Y, d, d, 270, 90);
-                path.AddArc(box.Right - d, box.Bottom - d, d, d, 0, 90); path.AddArc(box.X, box.Bottom - d, d, d, 90, 90);
-                path.CloseFigure();
-                g.DrawPath(pen, path);
-                float bar = s * 0.46f, stem = w * 1.15f, top = y + s * 0.27f, bottom = y + s * 0.75f;
-                g.FillRectangle(b, x + (s - bar) / 2, top, bar, w * 1.1f);
-                g.FillRectangle(b, x + (s - stem) / 2, top, stem, bottom - top);
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                float w = s * 0.085f, d = s * 0.26f;
+                var box = new RectangleF(s * 0.04f + w / 2, s * 0.04f + w / 2, s * 0.66f - w, s * 0.66f - w);
+                using (var path = new GraphicsPath())
+                using (var pen = new Pen(c, w))
+                {
+                    path.AddArc(box.X, box.Y, d, d, 180, 90); path.AddArc(box.Right - d, box.Y, d, d, 270, 90);
+                    path.AddArc(box.Right - d, box.Bottom - d, d, d, 0, 90); path.AddArc(box.X, box.Bottom - d, d, d, 90, 90);
+                    path.CloseFigure();
+                    g.DrawPath(pen, path);
+                }
+                float cx = s * 0.37f, bar = s * 0.32f, stem = s * 0.1f, top = s * 0.2f, bottom = s * 0.55f;
+                g.FillRectangle(b, cx - bar / 2, top, bar, s * 0.095f);
+                g.FillRectangle(b, cx - stem / 2, top, stem, bottom - top);
+
+                // pencil: drawn pointing left from its tip, then turned to point down-left
+                float hw = s * 0.11f, tip = s * 0.19f, len = s * 0.66f, cap = s * 0.12f, gap = s * 0.03f;
+                var m = new Matrix(); m.Translate(s * 0.36f, s * 0.97f); m.Rotate(-45);
+                using (var outline = new GraphicsPath())
+                using (var cut = new Pen(Color.Transparent, s * 0.09f) { LineJoin = LineJoin.Round })
+                {
+                    outline.AddPolygon(new[] { new PointF(0, 0), new PointF(tip, -hw), new PointF(len, -hw), new PointF(len, hw), new PointF(tip, hw) });
+                    outline.Transform(m);
+                    g.CompositingMode = CompositingMode.SourceCopy; // knock out the box under and around the pencil
+                    g.DrawPath(cut, outline); g.FillPath(clear, outline);
+                    g.CompositingMode = CompositingMode.SourceOver;
+                }
+                using (var parts = new GraphicsPath())
+                {
+                    parts.AddPolygon(new[] { new PointF(0, 0), new PointF(tip, -hw), new PointF(tip, hw) });
+                    parts.AddRectangle(new RectangleF(tip + gap, -hw, len - cap - tip - 2 * gap, 2 * hw));
+                    parts.AddRectangle(new RectangleF(len - cap, -hw, cap, 2 * hw));
+                    parts.Transform(m);
+                    g.FillPath(b, parts);
+                }
             }
+            return bmp;
         }
 
         public static void Glyph(Graphics g, string s, Font f, Rectangle r, Color c)
@@ -141,7 +168,7 @@ namespace TNote
             g.Clear(P.Title);
             var docs = Docs(); var active = Active();
             // app glyph
-            Ui.Mark(g, new RectangleF(13, 10, 23, 23), P.Accent);
+            using (var mark = Ui.MarkBitmap(30, P.Accent)) g.DrawImage(mark, 10, 6);
             for (int i = 0; i < docs.Count; i++)
             {
                 var r = TabRect(i); var d = docs[i]; bool on = d == active, hov = r.Contains(mouse);

@@ -1,5 +1,5 @@
 <title>Tnote</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1.36' y='1.36' width='13.28' height='13.28' rx='3.04' fill='none' stroke='%233B7BC4' stroke-width='1.76'/%3E%3Cpath d='M4.32 4.32h7.36v1.94H4.32zM6.99 4.32h2.02V12H6.99z' fill='%233B7BC4'/%3E%3C/svg%3E">
+<link rel="icon" id="favicon">
 <style>
 /* Layout: Windows 11 Notepad — tab strip (title bar), menu + formatting row, editor, status bar.
    Light colors are sampled from a screenshot of the real app. */
@@ -30,7 +30,7 @@ svg.chev { width: 10px; height: 10px; }
 
 .tabs { display: flex; align-items: flex-end; height: 42px; padding: 0 8px 0 0; background: var(--title); overflow-x: auto; scrollbar-width: none; flex-shrink: 0; }
 .appicon { width: 48px; height: 42px; display: grid; place-items: center; flex-shrink: 0; color: var(--accent); }
-.appicon svg { width: 23px; height: 23px; }
+.appicon svg { width: 28px; height: 28px; }
 .tab { position: relative; display: flex; align-items: center; height: 36px; width: 240px; min-width: 80px; flex-shrink: 1;
   padding: 0 4px 0 12px; border-radius: 8px 8px 0 0; color: var(--fg); }
 .tab:hover { background: var(--hover); }
@@ -227,6 +227,7 @@ function dialog({ title: h, body, input, buttons }) {
 function renderTabs() {
   const box = $('tabs'); box.innerHTML = '';
   const appIcon = document.createElement('div'); appIcon.className = 'appicon'; appIcon.innerHTML = ICON.page; box.append(appIcon);
+  $('favicon').href = 'data:image/svg+xml,' + encodeURIComponent(ICON.page.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ').replaceAll('currentColor', '#3B7BC4'));
   state.tabs.forEach(t => {
     const el = document.createElement('div');
     el.className = 'tab' + (t.id === state.active ? ' active' : '');
@@ -743,8 +744,8 @@ function renderMenubar() {
 // Line icons drawn to match Segoe Fluent Icons' 16px grid
 const svg = (d, cls = 'i') => `<svg class="${cls}" viewBox="0 0 16 16" aria-hidden="true">${d}</svg>`;
 const ICON = {
-  // the T series mark, as in the desktop title bar (Ui.Mark)
-  page: svg('<rect x="1.36" y="1.36" width="13.28" height="13.28" rx="3.04" fill="none" stroke="currentColor" stroke-width="1.76"/><path d="M4.32 4.32h7.36v1.94H4.32zM6.99 4.32h2.02V12H6.99z" fill="currentColor" stroke="none"/>'),
+  // the T series mark with a pencil, as in the desktop title bar (Ui.MarkBitmap); the mask cuts the gap around the pencil
+  page: svg('<defs><mask id="markCut"><rect width="16" height="16" fill="#fff"/><path transform="translate(5.76 15.52) rotate(-45)" d="M0 0L3.04-1.76H10.56V1.76H3.04Z" stroke="#000" stroke-width="1.44" stroke-linejoin="round"/></mask></defs><g mask="url(#markCut)"><rect x="1.32" y="1.32" width="9.2" height="9.2" rx="2.08" fill="none" stroke="currentColor" stroke-width="1.36"/><path d="M3.36 3.2h5.12v1.52H3.36zM5.12 3.2h1.6v5.6h-1.6z" fill="currentColor" stroke="none"/></g><g transform="translate(5.76 15.52) rotate(-45)" fill="currentColor" stroke="none"><path d="M0 0L3.04-1.76V1.76Z"/><rect x="3.52" y="-1.76" width="4.64" height="3.52"/><rect x="8.64" y="-1.76" width="1.92" height="3.52"/></g>'),
   plus: svg('<path d="M8 2v12M2 8h12"/>'),
   close: svg('<path d="M3 3l10 10M13 3L3 13"/>'),
   min: svg('<path d="M2 8h12"/>'),

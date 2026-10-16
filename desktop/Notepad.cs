@@ -265,7 +265,8 @@ namespace NotepadClone
     // Markdown spans for live formatting. Offsets index the editor text ('\n' line breaks).
     static class MdSpans
     {
-        public enum K { Heading, Quote, Bold, Italic, Strike, Code, Dim, Accent, Link }
+        // Mark: syntax that's hidden unless markers are shown or the caret is on its line (**, #, link URL...)
+        public enum K { Heading, Quote, Bold, Italic, Strike, Code, Dim, Mark, Accent, Link }
         public struct Span { public int A, N, Level; public K Kind; }
 
         static readonly Regex Head = new Regex(@"^(#{1,6}\s+)(.*)$"), Hr = new Regex(@"^\s*(---+|\*\*\*+|___+)\s*$"),
@@ -286,7 +287,7 @@ namespace NotepadClone
                 if ((m = Head.Match(l)).Success)
                 {
                     Add(r, a, l.Length, K.Heading, m.Groups[1].Value.TrimEnd().Length);
-                    Add(r, a, m.Groups[1].Length, K.Dim);
+                    Add(r, a, m.Groups[1].Length, K.Mark);
                     Inline(r, a + m.Groups[2].Index, m.Groups[2].Value);
                 }
                 else if (Hr.IsMatch(l)) Add(r, a, l.Length, K.Dim);
@@ -320,19 +321,24 @@ namespace NotepadClone
             var masked = l.ToCharArray(); // code spans hide their contents from the other rules
             foreach (Match m in Code.Matches(l))
             {
-                Add(r, a + m.Index, m.Length, K.Code); Add(r, a + m.Index, 1, K.Dim); Add(r, a + m.Index + m.Length - 1, 1, K.Dim);
+                Add(r, a + m.Index, m.Length, K.Code); Add(r, a + m.Index, 1, K.Mark); Add(r, a + m.Index + m.Length - 1, 1, K.Mark);
                 for (int j = m.Index; j < m.Index + m.Length; j++) masked[j] = ' ';
             }
             string t = new string(masked);
-            foreach (Match m in Link.Matches(t)) { Add(r, a + m.Index, m.Length, K.Dim); Add(r, a + m.Groups[1].Index, m.Groups[1].Length, K.Link); }
+            foreach (Match m in Link.Matches(t))
+            {
+                int text = m.Groups[1].Index, end = text + m.Groups[1].Length;
+                Add(r, a + m.Index, 1, K.Mark); Add(r, a + end, m.Index + m.Length - end, K.Mark); // "[" and "](url)"
+                Add(r, a + text, m.Groups[1].Length, K.Link);
+            }
+            Pair(r, a, t, Strike, 2, K.Strike); // before ***, whose masking would hide ~~ that wraps it
             foreach (Match m in BoldItalic.Matches(t)) // ***x*** is bold and italic; hide it from the ** and * rules
             {
                 Add(r, a + m.Index, m.Length, K.Bold); Add(r, a + m.Index, m.Length, K.Italic);
-                Add(r, a + m.Index, 3, K.Dim); Add(r, a + m.Index + m.Length - 3, 3, K.Dim);
+                Add(r, a + m.Index, 3, K.Mark); Add(r, a + m.Index + m.Length - 3, 3, K.Mark);
                 t = t.Substring(0, m.Index) + new string(' ', m.Length) + t.Substring(m.Index + m.Length);
             }
             Pair(r, a, t, Bold, 2, K.Bold);
-            Pair(r, a, t, Strike, 2, K.Strike);
             Pair(r, a, t, Italic, 1, K.Italic);
         }
 
@@ -341,7 +347,7 @@ namespace NotepadClone
             foreach (Match m in re.Matches(t))
             {
                 Add(r, a + m.Index, m.Length, k);
-                Add(r, a + m.Index, mark, K.Dim); Add(r, a + m.Index + m.Length - mark, mark, K.Dim);
+                Add(r, a + m.Index, mark, K.Mark); Add(r, a + m.Index + m.Length - mark, mark, K.Mark);
             }
         }
 
@@ -362,6 +368,7 @@ namespace NotepadClone
         dynamic tom;
 
         public MdEditor() { Multiline = true; DetectUrls = false; AutoWordSelection = false; }
+
 
         // RichEdit's own OLE drop target swallows dropped files, so replace it with plain WM_DROPFILES
         [DllImport("ole32.dll")] static extern int RevokeDragDrop(IntPtr h);
@@ -442,10 +449,32 @@ namespace NotepadClone
         static int Rgb(Color c) { return c.R | c.G << 8 | c.B << 16; }
         static Color Mix(Color a, Color b, float t) { return Color.FromArgb((int)(a.R + (b.R - a.R) * t), (int)(a.G + (b.G - a.G) * t), (int)(a.B + (b.B - a.B) * t)); }
 
-        public void Restyle(bool on, Palette P)
+        // Lines (char range) whose markers are revealed: the ones the caret or selection is on
+        int revealA = -1, revealB = -1;
+        bool lastOn, lastShowMarks; Palette lastP;
+
+        void CaretLines(string s, out int a, out int b)
         {
+            int ss = Math.Min(SelectionStart, s.Length), se = Math.Min(ss + SelectionLength, s.Length);
+            a = ss == 0 ? 0 : s.LastIndexOf('\n', ss - 1) + 1;
+            b = s.IndexOf('\n', se); if (b < 0) b = s.Length;
+        }
+
+        protected override void OnSelectionChanged(EventArgs e)
+        {
+            base.OnSelectionChanged(e);
+            if (Styling || lastP == null || !lastOn || lastShowMarks) return;
+            int a, b; CaretLines(Text, out a, out b);
+            // Moving to another line reveals its markers and hides the old line's; deferred out of the notification
+            if (a != revealA || b != revealB) BeginInvoke((Action)(() => { if (!Composing) Restyle(lastOn, lastP, lastShowMarks); }));
+        }
+
+        public void Restyle(bool on, Palette P, bool showMarks)
+        {
+            lastOn = on; lastP = P; lastShowMarks = showMarks;
             string s = Text;
             if (s.Length > MaxStyledLength) on = false;
+            CaretLines(s, out revealA, out revealB);
             Styling = true;
             try
             {
@@ -471,6 +500,12 @@ namespace NotepadClone
                             case MdSpans.K.Strike: f.StrikeThrough = tomTrue; break;
                             case MdSpans.K.Code: f.Name = "Consolas"; f.BackColor = Rgb(P.Hover); break;
                             case MdSpans.K.Dim: f.ForeColor = dim; break;
+                            case MdSpans.K.Mark:
+                                // Not Font.Hidden: RichTextBox.Text drops hidden text, so saving would lose the markers.
+                                // A 1pt glyph in the background color is effectively invisible and keeps the text intact.
+                                if (showMarks || (sp.A + sp.N > revealA && sp.A <= revealB)) f.ForeColor = dim;
+                                else { f.Size = 1f; f.ForeColor = Rgb(P.Editor); }
+                                break;
                             case MdSpans.K.Accent: f.ForeColor = Rgb(P.Accent); break;
                             case MdSpans.K.Link: f.ForeColor = Rgb(P.Accent); f.Underline = 1; break;
                         }
@@ -491,11 +526,11 @@ namespace NotepadClone
         readonly List<TabDoc> docs = new List<TabDoc>();
         readonly ToolStripMenuItem recentMenu = new ToolStripMenuItem("최근 파일");
         MenuStrip menu;
-        ToolStripMenuItem wrapItem, statusItem, darkItem, previewBtn, liveItem;
+        ToolStripMenuItem wrapItem, statusItem, darkItem, previewBtn, liveItem, marksItem;
         readonly List<ToolStripItem> iconItems = new List<ToolStripItem>();
         Font editorFont = new Font("Consolas", 11f);
         float zoom = 1f;
-        bool wordWrap = true, dark, previewOn, liveFormat = true;
+        bool wordWrap = true, dark, previewOn, liveFormat = true, showMarks;
         readonly Timer restyleTimer = new Timer { Interval = 150 };
         Palette P = Palette.Light;
         TabDoc active;
@@ -644,8 +679,9 @@ namespace NotepadClone
             darkItem = Item("어두운 테마", Keys.None, (s, e) => SetDark(!dark));
             liveItem = Item("서식 표시", Keys.None, (s, e) => { liveFormat = !liveFormat; liveItem.Checked = liveFormat; RestyleAll(); });
             liveItem.Checked = liveFormat;
+            marksItem = Item("서식 기호 표시", Keys.None, (s, e) => { showMarks = !showMarks; marksItem.Checked = showMarks; RestyleAll(); });
             previewBtn = Item("서식 미리 보기", Keys.Control | Keys.Shift | Keys.M, (s, e) => TogglePreview());
-            view.DropDownItems.AddRange(new ToolStripItem[] { statusItem, wrapItem, darkItem, new ToolStripSeparator(), liveItem, previewBtn });
+            view.DropDownItems.AddRange(new ToolStripItem[] { statusItem, wrapItem, darkItem, new ToolStripSeparator(), liveItem, marksItem, previewBtn });
 
             foreach (var top in new[] { file, edit, view }) top.Padding = new Padding(10, 0, 10, 0);
             m.Items.AddRange(new ToolStripItem[] { file, edit, view });
@@ -1021,7 +1057,7 @@ namespace NotepadClone
         }
 
         // ---------- live formatting ----------
-        void Restyle(TabDoc d) { if (d.Box.IsHandleCreated) d.Box.Restyle(liveFormat, P); }
+        void Restyle(TabDoc d) { if (d.Box.IsHandleCreated) d.Box.Restyle(liveFormat, P, showMarks); }
         void RestyleAll() { foreach (var d in docs) Restyle(d); }
 
         // ---------- formatting commands ----------

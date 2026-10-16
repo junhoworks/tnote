@@ -1227,7 +1227,7 @@ namespace TNote
         public MainForm(string[] args)
         {
             MigrateSettings();
-            Text = "tnote";
+            Text = "Tnote";
             Size = new Size(1000, 640);
             MinimumSize = new Size(480, 300);
             KeyPreview = true;
@@ -1560,7 +1560,7 @@ namespace TNote
             path = System.IO.Path.GetFullPath(path);
             var existing = docs.FirstOrDefault(x => string.Equals(x.Path, path, StringComparison.OrdinalIgnoreCase));
             if (existing != null) { Switch(existing); return; }
-            if (!File.Exists(path)) { MessageBox.Show(this, path + " 파일을 찾을 수 없습니다.", "tnote"); return; }
+            if (!File.Exists(path)) { MessageBox.Show(this, path + " 파일을 찾을 수 없습니다.", "Tnote"); return; }
             var bytes = File.ReadAllBytes(path);
             var enc = DetectEncoding(bytes);
             string text = enc.GetString(bytes);
@@ -1623,7 +1623,7 @@ namespace TNote
         // Saving formatted text as a non-Markdown file: Yes = save as Markdown, No = save as text, Cancel
         DialogResult AskKeepFormatting()
         {
-            using (var f = new Form { Text = "tnote", FormBorderStyle = FormBorderStyle.FixedDialog, ClientSize = new Size(520, 200), StartPosition = FormStartPosition.CenterParent, MaximizeBox = false, MinimizeBox = false, ShowInTaskbar = false, Font = Ui.Body, BackColor = P.Menu, ForeColor = P.Text })
+            using (var f = new Form { Text = "Tnote", FormBorderStyle = FormBorderStyle.FixedDialog, ClientSize = new Size(520, 200), StartPosition = FormStartPosition.CenterParent, MaximizeBox = false, MinimizeBox = false, ShowInTaskbar = false, Font = Ui.Body, BackColor = P.Menu, ForeColor = P.Text })
             {
                 var title = new Label { Text = "서식을 유지하려면 Markdown으로 저장", Font = new Font(Ui.Body.FontFamily, 14f), Left = 24, Top = 18, Width = 470, Height = 32 };
                 var body = new Label { Text = "텍스트 파일입니다. 굵게 및 제목 등의 현재 서식을 유지하려면 Markdown 파일(.md)로 저장합니다.", Left = 24, Top = 56, Width = 470, Height = 40 };
@@ -1679,7 +1679,7 @@ namespace TNote
         {
             if (!d.Dirty) return true;
             Switch(d);
-            var r = MessageBox.Show(this, d.Title + "의 변경 내용을 저장하시겠습니까?", "tnote", MessageBoxButtons.YesNoCancel);
+            var r = MessageBox.Show(this, d.Title + "의 변경 내용을 저장하시겠습니까?", "Tnote", MessageBoxButtons.YesNoCancel);
             if (r == DialogResult.Cancel) return false;
             return r == DialogResult.No || Save(d, false);
         }
@@ -1695,7 +1695,7 @@ namespace TNote
             if (active == d) Switch(docs[Math.Max(0, i - 1)]); else strip.Invalidate();
         }
 
-        void UpdateTitle() { if (Cur != null) Text = Cur.Title + " - tnote"; }
+        void UpdateTitle() { if (Cur != null) Text = Cur.Title + " - Tnote"; }
 
         void UpdateStatus()
         {
@@ -1775,7 +1775,7 @@ namespace TNote
                 idx = start < 0 ? -1 : b.Text.LastIndexOf(what, start, cmp);
                 if (idx < 0) idx = b.Text.LastIndexOf(what, cmp);
             }
-            if (idx < 0) { MessageBox.Show(this, "\"" + what + "\"을(를) 찾을 수 없습니다.", "tnote"); return; }
+            if (idx < 0) { MessageBox.Show(this, "\"" + what + "\"을(를) 찾을 수 없습니다.", "Tnote"); return; }
             b.Select(idx, what.Length); b.ScrollToCaret(); UpdateStatus();
         }
 
@@ -2080,7 +2080,7 @@ namespace TNote
         {
             EnsureEditing();
             var b = Cur.Box;
-            if (b.SelectionLength == 0) { MessageBox.Show(this, "서식을 지울 텍스트를 선택하세요.", "tnote"); return; }
+            if (b.SelectionLength == 0) { MessageBox.Show(this, "서식을 지울 텍스트를 선택하세요.", "Tnote"); return; }
             if (!showMarks) { b.ClearFormat(P); Changed(); return; }
             string s = b.SelectedText;
             s = Regex.Replace(s, @"(?m)^#{1,6}\s+", "");

@@ -1,6 +1,6 @@
-# tnote
+# Tnote
 
-tnote is a text editor modeled on Windows 11 Notepad, in two versions: a single-file web app and a WinForms desktop app.
+Tnote is a text editor modeled on Windows 11 Notepad, in two versions: a single-file web app and a WinForms desktop app.
 
 The feature set was mapped from Notepad's `NotepadXamlUI.winmd` metadata (analyzed with [REA](https://github.com/morluto/rea)), and the colors and layout were measured from a screenshot of the real app. No Microsoft code or assets are included.
 

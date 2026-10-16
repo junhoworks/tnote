@@ -6,7 +6,7 @@
   --title: #d1dbec; --chrome: #f1f4f9; --surface: #f9f9f9; --bg: #f1f4f9;
   --fg: #1a1a1a; --muted: #5f5f5f; --line: #e4e7ec; --accent: #005fb8;
   --hover: #e3e7ee; --pressed: #d8dde6; --menu: #f9f9f9; --menu-line: #e0e0e0; --danger: #c42b1c;
-  --ui: "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+  --ui: "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
   --mono: Consolas, "Cascadia Mono", "D2Coding", ui-monospace, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
@@ -412,7 +412,7 @@ function updateStatus() {
   const t = cur(), v = ed.value, s = ed.selectionStart, e = ed.selectionEnd;
   const before = v.slice(0, s), line = before.split('\n').length, col = s - before.lastIndexOf('\n');
   $('stPos').textContent = `줄 ${line}, 열 ${col}`;
-  $('stChars').textContent = e > s ? `${e - s}/${v.length}자` : `${v.length}자`;
+  $('stChars').textContent = e > s ? `${e - s}/${v.length} 자` : `${v.length} 자`;
   $('stKind').textContent = /\.md$/i.test(t.name || '') ? 'Markdown' : '일반 텍스트';
   $('stZoom').textContent = Math.round(settings.zoom * 100) + '%';
   $('stEol').textContent = t.eol === '\r\n' ? 'Windows (CRLF)' : t.eol === '\n' ? 'Unix (LF)' : 'Macintosh (CR)';

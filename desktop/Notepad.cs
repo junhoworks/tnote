@@ -47,38 +47,14 @@ namespace NotepadClone
 
     static class Ui
     {
-        public static readonly Font Body = new Font("Segoe UI Variable Text", 10.5f);
-        public static readonly Font Small = new Font("Segoe UI Variable Text", 9f);
+        // One UI font: Malgun Gothic covers Hangul, digits and Latin, so mixed text keeps one size and baseline
+        public static readonly Font Body = new Font("Malgun Gothic", 10f);
+        public static readonly Font Small = new Font("Malgun Gothic", 9f);
         public static Font Icons(float size) { return new Font("Segoe Fluent Icons", size); }
         public static readonly Font Icon10 = Icons(10f), Icon8 = Icons(7.5f), Icon7 = Icons(6f);
         public const string Add = "", Close = "", ChromeClose = "", Min = "", Max = "", Restore = "",
             Bold = "", Italic = "", Strike = "", Link = "", List = "", Table = "", Chevron = "",
             Settings = "", Eye = "", Clear = "", Page = "", Dot = "";
-
-        public static readonly Font SmallKo = new Font("Malgun Gothic", 9f);
-
-        // Segoe UI has no Hangul, and GDI's fallback draws it larger on a different baseline, so digits
-        // next to Korean look small and low. Draw Hangul runs in Malgun Gothic and the rest in the Latin
-        // font, on one shared baseline, vertically centered in r.
-        public static void DrawMixed(Graphics g, string s, Font latin, Font ko, Rectangle r, Color c)
-        {
-            const TextFormatFlags flags = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine;
-            Func<Font, float> ascent = f => f.FontFamily.GetCellAscent(f.Style) * f.Size / f.FontFamily.GetEmHeight(f.Style) * g.DpiY / 72f;
-            float height = latin.FontFamily.GetLineSpacing(latin.Style) * latin.Size / latin.FontFamily.GetEmHeight(latin.Style) * g.DpiY / 72f;
-            float baseline = r.Top + (r.Height - height) / 2f + ascent(latin);
-            int x = r.Left;
-            for (int i = 0; i < s.Length && x < r.Right; )
-            {
-                bool hangul = IsHangul(s[i]);
-                int j = i; while (j < s.Length && IsHangul(s[j]) == hangul) j++;
-                string run = s.Substring(i, j - i); var f = hangul ? ko : latin;
-                TextRenderer.DrawText(g, run, f, new Point(x, (int)Math.Round(baseline - ascent(f))), c, flags);
-                x += TextRenderer.MeasureText(g, run, f, Size.Empty, flags).Width;
-                i = j;
-            }
-        }
-
-        static bool IsHangul(char ch) { return (ch >= '가' && ch <= '힣') || (ch >= 'ᄀ' && ch <= 'ᇿ') || (ch >= '㄰' && ch <= '㆏'); }
 
         public static void Glyph(Graphics g, string s, Font f, Rectangle r, Color c)
         {
@@ -236,7 +212,8 @@ namespace NotepadClone
                 for (int i = 0; i < 6; i++)
                 {
                     if (i > 0) g.DrawLine(pen, x[i] - 10, 9, x[i] - 10, 23);
-                    Ui.DrawMixed(g, t[i], Ui.Small, Ui.SmallKo, new Rectangle(x[i], 0, (i < 5 ? x[i + 1] : w) - x[i] - 14, Height), P.Text);
+                    TextRenderer.DrawText(g, t[i], Ui.Small, new Rectangle(x[i], 0, (i < 5 ? x[i + 1] : w) - x[i] - 14, Height), P.Text,
+                        TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
                 }
         }
     }
@@ -1397,8 +1374,8 @@ namespace NotepadClone
             int col = sel - d.Box.GetFirstCharIndexFromLine(line);
             status.Pos = string.Format("줄 {0}, 열 {1}", line + 1, col + 1);
             status.Chars = d.Box.SelectionLength > 0
-                ? string.Format("{0}/{1}자", d.Box.SelectionLength, d.Box.TextLength)
-                : d.Box.TextLength + "자";
+                ? string.Format("{0}/{1} 자", d.Box.SelectionLength, d.Box.TextLength)
+                : d.Box.TextLength + " 자";
             status.Kind = d.Path != null && d.Path.EndsWith(".md", StringComparison.OrdinalIgnoreCase) ? "Markdown" : "일반 텍스트";
             status.Zoom = Math.Round(zoom * 100) + "%";
             status.Eol = d.Eol == "\r\n" ? "Windows (CRLF)" : d.Eol == "\n" ? "Unix (LF)" : "Macintosh (CR)";
@@ -1788,7 +1765,7 @@ namespace NotepadClone
             foreach (var x in docs) x.Box.Visible = false;
             preview.Visible = true; preview.BringToFront();
             Func<Color, string> hex = c => string.Format("#{0:X2}{1:X2}{2:X2}", c.R, c.G, c.B);
-            preview.DocumentText = "<!doctype html><meta charset=utf-8><meta http-equiv=X-UA-Compatible content=IE=edge><style>body{font:15px 'Segoe UI Variable Text','Segoe UI','Malgun Gothic',sans-serif;line-height:1.6;color:" + hex(P.Text) + ";background:" + hex(P.Editor) +
+            preview.DocumentText = "<!doctype html><meta charset=utf-8><meta http-equiv=X-UA-Compatible content=IE=edge><style>body{font:15px 'Malgun Gothic',sans-serif;line-height:1.6;color:" + hex(P.Text) + ";background:" + hex(P.Editor) +
                 ";padding:0 8px;margin:0}code{font-family:Consolas,monospace;background:" + hex(P.Hover) + ";padding:1px 4px}pre{background:" + hex(P.Hover) + ";padding:8px}blockquote{margin:0;padding-left:10px;border-left:3px solid " + hex(P.Border) + ";opacity:.8}table{border-collapse:collapse}td,th{border:1px solid " + hex(P.MenuBorder) + ";padding:3px 8px}a{color:" + hex(P.Accent) + "}</style>" +
                 MarkdownToHtml(showMarks ? d.Box.Text : d.Box.ToMarkdown());
         }

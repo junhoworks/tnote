@@ -790,12 +790,14 @@ function liveMarks(src) {
     let t = l;
     for (const m of l.matchAll(/`[^`]+`/g)) { mark(a + m.index, m[0].length, 'c'); mark(a + m.index, 1, 'd'); mark(a + m.index + m[0].length - 1, 1, 'd'); t = t.slice(0, m.index) + ' '.repeat(m[0].length) + t.slice(m.index + m[0].length); }
     for (const m of t.matchAll(/\[([^\]]+)\]\([^)\s]+\)/g)) { mark(a + m.index, m[0].length, 'd'); mark(a + m.index + 1, m[1].length, 'a'); mark(a + m.index + 1, m[1].length, 'u'); }
+    // ~~ first: the *** masking below would hide ~~ that wraps it
+    for (const m of t.matchAll(/~~(?!\s).+?~~/g)) { mark(a + m.index, m[0].length, 's'); mark(a + m.index, 2, 'd'); mark(a + m.index + m[0].length - 2, 2, 'd'); }
     for (const m of t.matchAll(/\*\*\*(?![\s*]).+?\*\*\*/g)) { // ***x*** is bold and italic; hide it from the ** and * rules
       mark(a + m.index, m[0].length, 'b'); mark(a + m.index, m[0].length, 'i');
       mark(a + m.index, 3, 'd'); mark(a + m.index + m[0].length - 3, 3, 'd');
       t = t.slice(0, m.index) + ' '.repeat(m[0].length) + t.slice(m.index + m[0].length);
     }
-    for (const [re, w, k] of [[/\*\*(?!\s).+?\*\*/g, 2, 'b'], [/~~(?!\s).+?~~/g, 2, 's'], [/(?<![*\w])\*(?![\s*])[^*]+?\*(?!\*)/g, 1, 'i']])
+    for (const [re, w, k] of [[/\*\*(?!\s).+?\*\*/g, 2, 'b'], [/(?<![*\w])\*(?![\s*])[^*]+?\*(?!\*)/g, 1, 'i']])
       for (const m of t.matchAll(re)) { mark(a + m.index, m[0].length, k); mark(a + m.index, w, 'd'); mark(a + m.index + m[0].length - w, w, 'd'); }
   };
   const sep = /^\s*\|[\s\-:|]+\|?\s*$/, lines = src.split('\n');

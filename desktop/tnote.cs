@@ -51,6 +51,7 @@ namespace TNote
         public static readonly Font Body = new Font("Malgun Gothic", 10f);
         public static readonly Font Small = new Font("Malgun Gothic", 9f);        public static Font Icons(float size) { return new Font("Segoe Fluent Icons", size); }
         public static readonly Font Icon10 = Icons(10f), Icon8 = Icons(7.5f), Icon7 = Icons(6f);
+        public const string History = "";
         public const string Add = "", Close = "", ChromeClose = "", Min = "", Max = "", Restore = "",
             Bold = "", Italic = "", Strike = "", Link = "", List = "", Table = "", Chevron = "",
             Settings = "", Block = "", Eye = "", Clear = "", Page = "", Dot = "";
@@ -221,6 +222,120 @@ namespace TNote
     }
 
     // Status bar laid out like Notepad's: position | characters | file type | zoom | line ending | encoding
+    // Right sidebar: recently opened or saved files, newest first. Each row shows a document icon for the
+    // file type, the file name and, below it, the folder; the x on a hovered row removes it from the list.
+    class RecentPanel : Control
+    {
+        public Palette P = Palette.Light;
+        public Func<List<string>> Items;
+        public Action<string> Open, Remove;
+        public Action ClearAll, Hide;
+        public const int FullWidth = 320;
+        const int HeaderH = 48, RowH = 54;
+        int scroll, hover = -1;
+        Point mouse = new Point(-1, -1);
+
+        public RecentPanel() { DoubleBuffered = true; ResizeRedraw = true; Font = Ui.Body; }
+
+        List<string> List { get { return Items != null ? Items() : new List<string>(); } }
+        Rectangle RowRect(int i) { return new Rectangle(6, HeaderH + i * RowH - scroll, Width - 14, RowH - 4); }
+        Rectangle RemoveRect(int i) { var r = RowRect(i); return new Rectangle(r.Right - 34, r.Y + (r.Height - 28) / 2, 28, 28); }
+        Rectangle CloseRect { get { return new Rectangle(Width - 42, 10, 30, 28); } }
+        Rectangle ClearRect { get { return new Rectangle(Width - 42 - 84, 10, 80, 28); } }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.Clear(P.Menu);
+            using (var pen = new Pen(P.MenuBorder)) g.DrawLine(pen, 0, 0, 0, Height);
+            var items = List;
+            var state = g.Save();
+            g.SetClip(new Rectangle(1, HeaderH - 2, Width, Height));
+            for (int i = 0; i < items.Count; i++)
+            {
+                var r = RowRect(i);
+                if (r.Bottom < HeaderH || r.Y > Height) continue;
+                string path = items[i]; bool exists = File.Exists(path);
+                if (i == hover) using (var b = new SolidBrush(P.Hover)) using (var gp = Ui.Round(r, 6)) g.FillPath(b, gp);
+                DocIcon(g, new Rectangle(r.X + 10, r.Y + 8, 26, 34), path);
+                int textW = r.Width - 52 - (i == hover ? 34 : 6);
+                Ui.SemiBold(g, System.IO.Path.GetFileName(path), Ui.Body, new Rectangle(r.X + 46, r.Y + 6, textW, 22), exists ? P.Text : P.Muted);
+                TextRenderer.DrawText(g, exists ? System.IO.Path.GetDirectoryName(path) : System.IO.Path.GetDirectoryName(path) + " (파일 없음)", Ui.Small,
+                    new Rectangle(r.X + 46, r.Y + 28, textW, 18), P.Muted, TextFormatFlags.Left | TextFormatFlags.PathEllipsis | TextFormatFlags.NoPrefix);
+                if (i == hover)
+                {
+                    var x = RemoveRect(i);
+                    if (x.Contains(mouse)) using (var b = new SolidBrush(P.Pressed)) using (var gp = Ui.Round(x, 4)) g.FillPath(b, gp);
+                    TextRenderer.DrawText(g, Ui.ChromeClose, Ui.Icon8, x, P.Text, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                }
+            }
+            g.Restore(state);
+            if (items.Count == 0)
+                TextRenderer.DrawText(g, "최근 파일이 없습니다", Ui.Small, new Rectangle(0, HeaderH + 20, Width, 24), P.Muted, TextFormatFlags.HorizontalCenter);
+
+            Ui.SemiBold(g, "최근 파일", Ui.Body, new Rectangle(16, 0, Width, HeaderH), P.Text);
+            if (items.Count > 0)
+            {
+                if (ClearRect.Contains(mouse)) using (var b = new SolidBrush(P.Hover)) using (var gp = Ui.Round(ClearRect, 4)) g.FillPath(b, gp);
+                TextRenderer.DrawText(g, "모두 지우기", Ui.Small, ClearRect, P.Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
+            if (CloseRect.Contains(mouse)) using (var b = new SolidBrush(P.Hover)) using (var gp = Ui.Round(CloseRect, 4)) g.FillPath(b, gp);
+            TextRenderer.DrawText(g, Ui.ChromeClose, Ui.Icon8, CloseRect, P.Text, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        }
+
+        // A page with a folded corner and the file type written on it: md in the accent color, others muted
+        void DocIcon(Graphics g, Rectangle r, string path)
+        {
+            string ext = System.IO.Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
+            if (ext.Length == 0) ext = "txt";
+            if (ext == "markdown") ext = "md";
+            Color c = ext == "md" ? P.Accent : P.Muted;
+            float fold = r.Width * 0.32f;
+            using (var page = new GraphicsPath())
+            using (var pen = new Pen(c, 1.4f))
+            {
+                page.AddLines(new[] { new PointF(r.X, r.Y), new PointF(r.Right - fold, r.Y), new PointF(r.Right, r.Y + fold), new PointF(r.Right, r.Bottom), new PointF(r.X, r.Bottom) });
+                page.CloseFigure();
+                g.DrawPath(pen, page);
+                g.DrawLines(pen, new[] { new PointF(r.Right - fold, r.Y), new PointF(r.Right - fold, r.Y + fold), new PointF(r.Right, r.Y + fold) });
+            }
+            using (var f = new Font("Segoe UI", ext.Length > 3 ? 5.5f : 6.5f, FontStyle.Bold))
+                TextRenderer.DrawText(g, ext.Length > 4 ? ext.Substring(0, 4) : ext, f, new Rectangle(r.X - 4, r.Y + r.Height / 2 - 2, r.Width + 8, r.Height / 2), c,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
+
+        int RowAt(Point p)
+        {
+            if (p.Y < HeaderH) return -1;
+            int i = (p.Y - HeaderH + scroll) / RowH;
+            return i >= 0 && i < List.Count && RowRect(i).Contains(p) ? i : -1;
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e) { mouse = e.Location; hover = RowAt(e.Location); Cursor = hover >= 0 || CloseRect.Contains(mouse) || ClearRect.Contains(mouse) ? Cursors.Hand : Cursors.Default; Invalidate(); base.OnMouseMove(e); }
+        protected override void OnMouseLeave(EventArgs e) { mouse = new Point(-1, -1); hover = -1; Invalidate(); base.OnMouseLeave(e); }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            if (e.Button != MouseButtons.Left) return;
+            if (CloseRect.Contains(e.Location)) { if (Hide != null) Hide(); return; }
+            if (ClearRect.Contains(e.Location) && List.Count > 0) { if (ClearAll != null) ClearAll(); scroll = 0; Invalidate(); return; }
+            int i = RowAt(e.Location); if (i < 0) return;
+            string path = List[i];
+            if (RemoveRect(i).Contains(e.Location)) { if (Remove != null) Remove(path); }
+            else if (Open != null) Open(path);
+            hover = RowAt(e.Location); ClampScroll(); Invalidate();
+        }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            scroll -= e.Delta / 120 * RowH; ClampScroll();
+            hover = RowAt(e.Location); Invalidate(); base.OnMouseWheel(e);
+        }
+
+        void ClampScroll() { scroll = Math.Max(0, Math.Min(scroll, Math.Max(0, HeaderH + List.Count * RowH - Height + 8))); }
+    }
+
     class StatusPanel : Control
     {
         public string Pos = "", Chars = "", Kind = "일반 텍스트", Zoom = "", Eol = "", Enc = "";
@@ -1180,6 +1295,10 @@ namespace TNote
         readonly Panel editorHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(14, 16, 0, 0) };
         readonly List<TabDoc> docs = new List<TabDoc>();
         readonly ToolStripMenuItem recentMenu = new ToolStripMenuItem("최근 파일");
+        readonly RecentPanel side = new RecentPanel { Dock = DockStyle.Right, Width = 0, Visible = false };
+        readonly Timer sideTimer = new Timer { Interval = 12 };
+        ToolStripMenuItem sideBtn;
+        bool sideOpen;
         MenuStrip menu;
         ToolStripMenuItem wrapItem, statusItem, darkItem, previewBtn, marksItem;
         readonly List<ToolStripItem> iconItems = new List<ToolStripItem>();
@@ -1262,6 +1381,11 @@ namespace TNote
             MainMenuStrip = menu;
             editorHost.Controls.Add(preview);
             Controls.Add(editorHost);
+            Controls.Add(side);
+            side.Items = () => recent; side.Open = OpenFile; side.Hide = () => SetSidePanel(false);
+            side.Remove = p => { recent.RemoveAll(x => string.Equals(x, p, StringComparison.OrdinalIgnoreCase)); SaveRecent(); };
+            side.ClearAll = () => { recent.Clear(); SaveRecent(); };
+            sideTimer.Tick += (s, e) => SlideSidePanel();
             Controls.Add(status);
             Controls.Add(menu);
             Controls.Add(strip);
@@ -1459,6 +1583,8 @@ namespace TNote
             foreach (ToolStripItem d in settings.DropDownItems) d.Font = Ui.Body;
             var eye = IconBtn(Ui.Eye, "서식 미리 보기 (Ctrl+Shift+M)", (s, e) => TogglePreview());
             eye.Alignment = ToolStripItemAlignment.Right;
+            sideBtn = IconBtn(Ui.History, "최근 파일 (Ctrl+Shift+O)", (s, e) => SetSidePanel(!sideOpen));
+            sideBtn.Alignment = ToolStripItemAlignment.Right;
 
             var link = IconBtn(Ui.Link, "링크 (Ctrl+K)", (s, e) => InsertLink());
             var clear = IconBtn(Ui.Clear, "서식 지우기", (s, e) => ClearFormatting());
@@ -1471,7 +1597,7 @@ namespace TNote
                 IconBtn(Ui.Strike, "취소선", (s, e) => Format(MdFormat.A.Strike, "~~")),
                 link, table, clear,
                 BlockBtn(),
-                settings, eye });
+                settings, eye, sideBtn });
         }
 
         // With a block, only bold, italic and strikethrough apply (to each line's part); the rest work on
@@ -1510,6 +1636,8 @@ namespace TNote
             {
                 if (keyData == (Keys.Control | Keys.B)) { Format(MdFormat.A.Bold, "**"); return true; }
                 if (keyData == (Keys.Control | Keys.I)) { Format(MdFormat.A.Italic, "*"); return true; }
+                if (keyData == (Keys.Control | Keys.Shift | Keys.O)) { SetSidePanel(!sideOpen); return true; }
+                if (keyData == Keys.Escape && sideOpen) { SetSidePanel(false); return true; }
                 if (keyData == (Keys.Control | Keys.K)) { if (!BlockFormatting) InsertLink(); return true; }
             }
             return base.ProcessCmdKey(ref msg, keyData);
@@ -1866,7 +1994,7 @@ namespace TNote
         {
             P = dark ? Palette.Dark : Palette.Light;
             BackColor = P.Border; // shows through the 1px edge padding
-            strip.P = P; status.P = P;
+            strip.P = P; status.P = P; side.P = P; side.Invalidate();
             menu.Renderer = new FlatRenderer(P);
             menu.BackColor = P.Chrome;
             editorHost.BackColor = P.Editor;
@@ -2204,15 +2332,38 @@ namespace TNote
         {
             recent.RemoveAll(p => string.Equals(p, path, StringComparison.OrdinalIgnoreCase));
             recent.Insert(0, path);
-            if (recent.Count > 10) recent.RemoveRange(10, recent.Count - 10);
+            if (recent.Count > 30) recent.RemoveRange(30, recent.Count - 30); // the sidebar lists them all, the menu the first 10
+            SaveRecent();
+        }
+
+        void SaveRecent()
+        {
             try { Directory.CreateDirectory(System.IO.Path.GetDirectoryName(SettingsPath)); File.WriteAllLines(SettingsPath, recent); } catch (IOException) { }
-            RefreshRecentMenu();
+            RefreshRecentMenu(); side.Invalidate();
+        }
+
+        // The recent files sidebar slides in from the right and pushes the editor over
+        void SetSidePanel(bool open)
+        {
+            sideOpen = open; sideBtn.Checked = open;
+            if (open) side.Visible = true;
+            sideTimer.Start();
+            if (!open && Cur != null) Cur.Box.Focus();
+        }
+
+        void SlideSidePanel()
+        {
+            int target = sideOpen ? RecentPanel.FullWidth : 0, step = Math.Max(8, Math.Abs(target - side.Width) / 3);
+            side.Width = target > side.Width ? Math.Min(target, side.Width + step) : Math.Max(target, side.Width - step);
+            if (side.Width != target) return;
+            sideTimer.Stop();
+            if (!sideOpen) side.Visible = false;
         }
 
         void RefreshRecentMenu()
         {
             recentMenu.DropDownItems.Clear();
-            foreach (var p in recent) { var path = p; recentMenu.DropDownItems.Add(path, null, (s, e) => OpenFile(path)); }
+            foreach (var p in recent.Take(10)) { var path = p; recentMenu.DropDownItems.Add(path, null, (s, e) => OpenFile(path)); }
             recentMenu.Enabled = recent.Count > 0;
         }
     }

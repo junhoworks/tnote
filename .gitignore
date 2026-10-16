@@ -1,3 +1,7 @@
 # Build output
 *.exe
 *.pdb
+
+# Personal Claude Code setup (subagent, model-use rules)
+.claude/
+CLAUDE.local.md

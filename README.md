@@ -14,6 +14,7 @@ The feature set was mapped from Notepad's `NotepadXamlUI.winmd` metadata (analyz
 - Zoom, word wrap, status bar, light and dark themes
 - Status bar: line/column, character count, file type, zoom, line ending (CRLF/LF/CR), encoding (UTF-8, UTF-8 BOM, UTF-16, ANSI)
 - Recent files
+- Drag files onto the window to open them in tabs
 
 ## Web (`web/index.html`)
 

@@ -363,6 +363,27 @@ namespace NotepadClone
 
         public MdEditor() { Multiline = true; DetectUrls = false; AutoWordSelection = false; }
 
+        // RichEdit's own OLE drop target swallows dropped files, so replace it with plain WM_DROPFILES
+        [DllImport("ole32.dll")] static extern int RevokeDragDrop(IntPtr h);
+        [DllImport("shell32.dll")] static extern void DragAcceptFiles(IntPtr h, bool accept);
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern int DragQueryFile(IntPtr drop, int i, StringBuilder buf, int len);
+        [DllImport("shell32.dll")] static extern void DragFinish(IntPtr drop);
+        public event Action<string[]> FilesDropped;
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == 0x0233 /* WM_DROPFILES */)
+            {
+                int n = DragQueryFile(m.WParam, -1, null, 0);
+                var files = new string[n];
+                for (int i = 0; i < n; i++) { var sb = new StringBuilder(DragQueryFile(m.WParam, i, null, 0) + 1); DragQueryFile(m.WParam, i, sb, sb.Capacity); files[i] = sb.ToString(); }
+                DragFinish(m.WParam);
+                if (FilesDropped != null) FilesDropped(files);
+                return;
+            }
+            base.WndProc(ref m);
+        }
+
         protected override CreateParams CreateParams
         {
             get
@@ -373,7 +394,11 @@ namespace NotepadClone
             }
         }
 
-        protected override void OnHandleCreated(EventArgs e) { tom = null; base.OnHandleCreated(e); }
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            tom = null; base.OnHandleCreated(e);
+            RevokeDragDrop(Handle); DragAcceptFiles(Handle, true);
+        }
 
         [DllImport("imm32.dll")] static extern IntPtr ImmGetContext(IntPtr h);
         [DllImport("imm32.dll")] static extern bool ImmReleaseContext(IntPtr h, IntPtr c);
@@ -499,6 +524,7 @@ namespace NotepadClone
             Controls.Add(status);
             Controls.Add(menu);
             Controls.Add(strip);
+            foreach (Control c in new Control[] { this, editorHost, status, menu, strip }) AcceptFileDrops(c);
             LoadRecent();
 
             if (args.Length > 0) foreach (var a in args) OpenFile(a);
@@ -742,6 +768,7 @@ namespace NotepadClone
             d.Box.MouseWheel += (s, e) => { if (ModifierKeys == Keys.Control) SetZoom(zoom + (e.Delta > 0 ? 0.1f : -0.1f)); };
             docs.Add(d);
             editorHost.Controls.Add(d.Box);
+            d.Box.FilesDropped += OpenDropped;
             Switch(d);
             return d;
         }
@@ -752,6 +779,21 @@ namespace NotepadClone
             foreach (var x in docs) x.Box.Visible = x == d && !previewOn;
             if (previewOn) ShowPreview(); else d.Box.Focus();
             UpdateTitle(); UpdateStatus(); strip.Invalidate();
+        }
+
+        // Files dropped anywhere on the window open in tabs. Drag events don't bubble to the form,
+        // so every surface registers its own handlers (the editors use WM_DROPFILES, see MdEditor).
+        void AcceptFileDrops(Control c)
+        {
+            c.AllowDrop = true;
+            c.DragEnter += (s, e) => { if (e.Data.GetDataPresent(DataFormats.FileDrop)) e.Effect = DragDropEffects.Copy; };
+            c.DragDrop += (s, e) => { var files = e.Data.GetData(DataFormats.FileDrop) as string[]; if (files != null) OpenDropped(files); };
+        }
+
+        void OpenDropped(string[] files)
+        {
+            // Defer so the source (e.g. Explorer) isn't blocked while files load or a message box shows
+            BeginInvoke((Action)(() => { foreach (var f in files) if (File.Exists(f)) OpenFile(f); Activate(); }));
         }
 
         void OpenDialog()

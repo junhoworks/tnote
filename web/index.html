@@ -946,9 +946,9 @@ document.addEventListener('keydown', e => {
 });
 window.addEventListener('beforeunload', () => { saveEditorToTab(); persist(); });
 
-// Drag and drop files onto the editor
-ed.addEventListener('dragover', e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); });
-ed.addEventListener('drop', async e => {
+// Drag and drop files anywhere on the window (otherwise the browser navigates to the dropped file)
+window.addEventListener('dragover', e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+window.addEventListener('drop', async e => {
   if (!e.dataTransfer.files.length) return;
   e.preventDefault();
   for (const f of e.dataTransfer.files) await openBuffer(f.name, await f.arrayBuffer(), null);

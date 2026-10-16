@@ -8,8 +8,6 @@ The feature set was mapped from Notepad's `NotepadXamlUI.winmd` metadata (analyz
 
 - Tabs with a `+` button, unsaved-change dot, and caption buttons (minimize, maximize, close)
 - Menus: File, Edit, View
-- Formatting toolbar: headings, lists, bold, italic, strikethrough, link, table, clear formatting. Formatting is stored as Markdown.
-- Live formatting: headings, bold, italic, strikethrough, code, links, lists, quotes and tables are styled in the editor as you type, with Markdown markers hidden except on the line being edited (View > 서식 표시; View > 서식 기호 표시 shows all markers). The web version dims markers instead of hiding them. A full rendered preview is still available (Ctrl+Shift+M).
 - Find and replace (match case, wrap around, replace all), go to line, time/date (F5)
 - Zoom, word wrap, status bar, light and dark themes
 - Status bar: line/column, character count, file type, zoom, line ending (CRLF/LF/CR), encoding (UTF-8, UTF-8 BOM, UTF-16, ANSI)

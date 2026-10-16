@@ -354,14 +354,150 @@ namespace NotepadClone
         static void Add(List<Span> r, int a, int n, K k, int level = 0) { if (n > 0) r.Add(new Span { A = a, N = n, Kind = k, Level = level }); }
     }
 
-    // Plain-text editor that shows Markdown formatting in place. Styling goes through the
-    // Text Object Model with undo suspended, so it never dirties the document or the undo stack.
+    // Converts between Markdown and formatted text. Like Windows Notepad, the editor holds plain text
+    // plus character formatting with no markers; Markdown exists only in .md files and the symbol view.
+    static class MdFormat
+    {
+        [Flags] public enum A { None = 0, Bold = 1, Italic = 2, Strike = 4, Code = 8 }
+        public class Fmt { public int Start, Length, Heading; public A Attr; public string Url; public bool CodeBlock; }
+
+        // Heading sizes relative to body text; H6 must still be distinguishable from body
+        public static readonly float[] HeadScale = { 1f, 1.7f, 1.45f, 1.25f, 1.12f, 1.07f, 1.03f };
+        public static int HeadingLevel(float ratio)
+        {
+            if (ratio < 1.015f) return 0;
+            int best = 1;
+            for (int n = 2; n <= 6; n++) if (Math.Abs(HeadScale[n] - ratio) < Math.Abs(HeadScale[best] - ratio)) best = n;
+            return best;
+        }
+
+        static readonly Regex Head = new Regex(@"^(#{1,6})\s+(.*)$"), LinePrefix = new Regex(@"^\s*([-*+] \[[ xX]\] |[-*+] |\d+\. |> )");
+        // Leftmost match wins; at the same spot earlier alternatives win, so *** beats ** beats *
+        static readonly Regex Tok = new Regex(@"\\([\\`*_~\[\]#|])|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)" +
+            @"|\*\*\*(?![\s*])(.+?)(?<!\s)\*\*\*|\*\*(?!\s)(.+?)(?<!\s)\*\*|~~(?!\s)(.+?)(?<!\s)~~|(?<![*\\])\*(?![\s*])(.+?)(?<!\s)\*(?!\*)");
+
+        // Markdown -> plain text plus formats. Lists, quotes, tables and rules stay as text.
+        public static string Parse(string md, List<Fmt> fmts)
+        {
+            var sb = new StringBuilder(); bool fence = false, first = true;
+            foreach (var l in md.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+            {
+                if (l.TrimStart().StartsWith("```")) { fence = !fence; continue; }
+                if (!first) sb.Append('\n');
+                first = false;
+                int a = sb.Length; Match m;
+                if (fence) { sb.Append(l); fmts.Add(new Fmt { Start = a, Length = l.Length + 1, CodeBlock = true }); } // +1: the line break marks a block line
+                else if ((m = Head.Match(l)).Success) { Inline(m.Groups[2].Value, sb, fmts); fmts.Add(new Fmt { Start = a, Length = sb.Length - a + 1, Heading = m.Groups[1].Length }); }
+                else Inline(l, sb, fmts);
+            }
+            return sb.ToString();
+        }
+
+        static void Inline(string s, StringBuilder sb, List<Fmt> fmts)
+        {
+            int pos = 0;
+            foreach (Match m in Tok.Matches(s))
+            {
+                sb.Append(s, pos, m.Index - pos); pos = m.Index + m.Length;
+                if (m.Groups[1].Success) { sb.Append(m.Groups[1].Value); continue; } // escaped character
+                int a = sb.Length; A attr = A.None; string url = null;
+                if (m.Groups[2].Success) { sb.Append(m.Groups[2].Value); attr = A.Code; }
+                else if (m.Groups[3].Success) { Inline(m.Groups[3].Value, sb, fmts); url = m.Groups[4].Value; }
+                else if (m.Groups[5].Success) { Inline(m.Groups[5].Value, sb, fmts); attr = A.Bold | A.Italic; }
+                else if (m.Groups[6].Success) { Inline(m.Groups[6].Value, sb, fmts); attr = A.Bold; }
+                else if (m.Groups[7].Success) { Inline(m.Groups[7].Value, sb, fmts); attr = A.Strike; }
+                else { Inline(m.Groups[8].Value, sb, fmts); attr = A.Italic; }
+                fmts.Add(new Fmt { Start = a, Length = sb.Length - a, Attr = attr, Url = url });
+            }
+            sb.Append(s, pos, s.Length - pos);
+        }
+
+        // Formatted text -> Markdown. Per character: attributes, link URL and font size relative to body.
+        // A line is a code block line when its line break carries the code background.
+        public static string Serialize(string text, A[] attr, string[] url, float[] ratio)
+        {
+            var o = new StringBuilder(); int n = text.Length, ls = 0; bool inBlock = false;
+            while (true)
+            {
+                int le = text.IndexOf('\n', ls); if (le < 0) le = n;
+                bool block = le < n ? (attr[le] & A.Code) != 0 : inBlock && le > ls && Enumerable.Range(ls, le - ls).All(i => (attr[i] & A.Code) != 0);
+                if (block != inBlock) { o.Append("```\n"); inBlock = block; }
+                if (block) o.Append(text, ls, le - ls);
+                else
+                {
+                    float mx = 1f; for (int i = ls; i < le; i++) mx = Math.Max(mx, ratio[i]);
+                    int h = HeadingLevel(mx);
+                    if (h > 0) o.Append('#', h).Append(' ');
+                    // A list or quote prefix stays outside the markers, or it would stop being a list
+                    var pm = LinePrefix.Match(text.Substring(ls, le - ls));
+                    if (pm.Success) o.Append(pm.Value);
+                    InlineMd(o, text, ls + pm.Length, le, attr, url, h > 0);
+                }
+                if (le >= n) break;
+                o.Append('\n'); ls = le + 1;
+            }
+            if (inBlock) o.Append("\n```");
+            return o.ToString();
+        }
+
+        // Plain text as Markdown: only escapes, no formatting
+        public static string Escape(string plain)
+        {
+            int n = plain.Length;
+            return Serialize(plain, new A[n + 1], new string[n + 1], Enumerable.Repeat(1f, n + 1).ToArray());
+        }
+
+        static void InlineMd(StringBuilder o, string text, int ls, int le, A[] attr0, string[] url0, bool heading)
+        {
+            int len = le - ls;
+            var at = new A[len]; var u = new string[len];
+            for (int i = 0; i < len; i++) { at[i] = attr0[ls + i]; if (heading) at[i] &= ~A.Bold; u[i] = url0[ls + i]; }
+            // Markers must hug text, so whitespace at the edges of a run is left outside it
+            foreach (var f in new[] { A.Bold, A.Italic, A.Strike })
+                for (int i = 0; i < len; )
+                {
+                    if ((at[i] & f) == 0) { i++; continue; }
+                    int j = i; while (j < len && (at[j] & f) != 0) j++;
+                    for (int k = i; k < j && char.IsWhiteSpace(text[ls + k]); k++) at[k] &= ~f;
+                    for (int k = j - 1; k >= i && char.IsWhiteSpace(text[ls + k]); k--) at[k] &= ~f;
+                    i = j;
+                }
+            // Open markers form a stack so nested ones close in reverse order (~~***x***~~)
+            var stack = new List<string>(); int start = o.Length;
+            for (int i = 0; i <= len; i++)
+            {
+                var want = new List<string>();
+                if (i < len)
+                {
+                    if (u[i] != null) want.Add("L" + u[i]);
+                    if ((at[i] & A.Strike) != 0) want.Add("~~");
+                    if ((at[i] & A.Bold) != 0) want.Add("**");
+                    if ((at[i] & A.Italic) != 0) want.Add("*");
+                    if ((at[i] & A.Code) != 0) want.Add("`");
+                }
+                int keep = 0; while (keep < stack.Count && keep < want.Count && stack[keep] == want[keep]) keep++;
+                for (int k = stack.Count - 1; k >= keep; k--) o.Append(stack[k][0] == 'L' ? "](" + stack[k].Substring(1) + ")" : stack[k]);
+                stack.RemoveRange(keep, stack.Count - keep);
+                if (i == len) break;
+                for (int k = keep; k < want.Count; k++) { o.Append(want[k][0] == 'L' ? "[" : want[k]); stack.Add(want[k]); }
+                char c = text[ls + i];
+                bool code = (at[i] & A.Code) != 0;
+                if (!code && ("\\*`[]~".IndexOf(c) >= 0 || (c == '#' && o.Length == start))) o.Append('\\');
+                o.Append(c);
+            }
+        }
+    }
+
+    // Editor control. Normally it shows formatted text (no Markdown markers); in the symbol view it
+    // shows Markdown source, styled in place. Styling goes through the Text Object Model with undo
+    // suspended, so it never dirties the document or the undo stack.
     class MdEditor : RichTextBox
     {
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr LoadLibrary(string name);
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, out IntPtr l);
-        const int EM_GETOLEINTERFACE = 0x0400 + 60, tomTrue = -1, tomSuspend = -9999995, tomResume = -9999994;
-        static readonly float[] HeadScale = { 1f, 1.7f, 1.45f, 1.25f, 1.12f, 1.05f, 1f };
+        const int EM_GETOLEINTERFACE = 0x0400 + 60, tomTrue = -1, tomSuspend = -9999995, tomResume = -9999994,
+            tomAutoColor = -9999997, tomCharFormat = 13, tomParagraph = 4;
+        const string CodeFont = "Consolas";
         public const int MaxStyledLength = 300000;
 
         public bool Styling;
@@ -425,10 +561,19 @@ namespace NotepadClone
             }
         }
 
+        // RichEdit's own formatting shortcuts (alignment, line spacing, underline, font size...) would add
+        // formatting that Markdown can't hold, so they're swallowed
+        static readonly Keys[] NativeFormatKeys = {
+            Keys.Control | Keys.L, Keys.Control | Keys.E, Keys.Control | Keys.R, Keys.Control | Keys.J, Keys.Control | Keys.U,
+            Keys.Control | Keys.D1, Keys.Control | Keys.D2, Keys.Control | Keys.D5, Keys.Control | Keys.Shift | Keys.A,
+            Keys.Control | Keys.Shift | Keys.L, Keys.Control | Keys.Shift | Keys.Oemcomma, Keys.Control | Keys.Shift | Keys.OemPeriod,
+            Keys.Control | Keys.OemOpenBrackets, Keys.Control | Keys.OemCloseBrackets };
+
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
             if (keyData == (Keys.Control | Keys.V) || keyData == (Keys.Shift | Keys.Insert)) { PastePlain(); return true; }
-            return base.ProcessCmdKey(ref msg, keyData);
+            if (base.ProcessCmdKey(ref msg, keyData)) return true; // menu shortcuts (e.g. Ctrl+B) come first
+            return Array.IndexOf(NativeFormatKeys, keyData) >= 0;
         }
 
         public void PastePlain() { if (Clipboard.ContainsText()) SelectedText = Clipboard.GetText().Replace("\r\n", "\n"); }
@@ -449,32 +594,11 @@ namespace NotepadClone
         static int Rgb(Color c) { return c.R | c.G << 8 | c.B << 16; }
         static Color Mix(Color a, Color b, float t) { return Color.FromArgb((int)(a.R + (b.R - a.R) * t), (int)(a.G + (b.G - a.G) * t), (int)(a.B + (b.B - a.B) * t)); }
 
-        // Lines (char range) whose markers are revealed: the ones the caret or selection is on
-        int revealA = -1, revealB = -1;
-        bool lastOn, lastShowMarks; Palette lastP;
-
-        void CaretLines(string s, out int a, out int b)
+        // ---------- symbol view: Markdown source styled in place ----------
+        public void Restyle(Palette P)
         {
-            int ss = Math.Min(SelectionStart, s.Length), se = Math.Min(ss + SelectionLength, s.Length);
-            a = ss == 0 ? 0 : s.LastIndexOf('\n', ss - 1) + 1;
-            b = s.IndexOf('\n', se); if (b < 0) b = s.Length;
-        }
-
-        protected override void OnSelectionChanged(EventArgs e)
-        {
-            base.OnSelectionChanged(e);
-            if (Styling || lastP == null || !lastOn || lastShowMarks) return;
-            int a, b; CaretLines(Text, out a, out b);
-            // Moving to another line reveals its markers and hides the old line's; deferred out of the notification
-            if (a != revealA || b != revealB) BeginInvoke((Action)(() => { if (!Composing) Restyle(lastOn, lastP, lastShowMarks); }));
-        }
-
-        public void Restyle(bool on, Palette P, bool showMarks)
-        {
-            lastOn = on; lastP = P; lastShowMarks = showMarks;
             string s = Text;
-            if (s.Length > MaxStyledLength) on = false;
-            CaretLines(s, out revealA, out revealB);
+            bool on = s.Length <= MaxStyledLength;
             Styling = true;
             try
             {
@@ -485,7 +609,7 @@ namespace NotepadClone
                     float size = Font.SizeInPoints;
                     var f = doc.Range(0, s.Length + 1).Font;
                     f.Bold = 0; f.Italic = 0; f.StrikeThrough = 0; f.Underline = 0;
-                    f.Name = Font.Name; f.Size = size; f.ForeColor = Rgb(P.Text); f.BackColor = Rgb(P.Editor);
+                    f.Name = Font.Name; f.Size = size; f.ForeColor = Rgb(P.Text); f.BackColor = tomAutoColor;
                     if (!on) return;
                     int dim = Rgb(Mix(P.Text, P.Editor, 0.55f));
                     foreach (var sp in MdSpans.Parse(s))
@@ -493,19 +617,14 @@ namespace NotepadClone
                         f = doc.Range(sp.A, sp.A + sp.N).Font;
                         switch (sp.Kind)
                         {
-                            case MdSpans.K.Heading: f.Bold = tomTrue; f.Size = size * HeadScale[sp.Level]; break;
+                            case MdSpans.K.Heading: f.Bold = tomTrue; f.Size = size * MdFormat.HeadScale[sp.Level]; break;
                             case MdSpans.K.Quote: f.Italic = tomTrue; f.ForeColor = Rgb(P.Muted); break;
                             case MdSpans.K.Bold: f.Bold = tomTrue; break;
                             case MdSpans.K.Italic: f.Italic = tomTrue; break;
                             case MdSpans.K.Strike: f.StrikeThrough = tomTrue; break;
-                            case MdSpans.K.Code: f.Name = "Consolas"; f.BackColor = Rgb(P.Hover); break;
-                            case MdSpans.K.Dim: f.ForeColor = dim; break;
-                            case MdSpans.K.Mark:
-                                // Not Font.Hidden: RichTextBox.Text drops hidden text, so saving would lose the markers.
-                                // A 1pt glyph in the background color is effectively invisible and keeps the text intact.
-                                if (showMarks || (sp.A + sp.N > revealA && sp.A <= revealB)) f.ForeColor = dim;
-                                else { f.Size = 1f; f.ForeColor = Rgb(P.Editor); }
-                                break;
+                            case MdSpans.K.Code: f.Name = CodeFont; f.BackColor = Rgb(P.Hover); break;
+                            case MdSpans.K.Dim:
+                            case MdSpans.K.Mark: f.ForeColor = dim; break;
                             case MdSpans.K.Accent: f.ForeColor = Rgb(P.Accent); break;
                             case MdSpans.K.Link: f.ForeColor = Rgb(P.Accent); f.Underline = 1; break;
                         }
@@ -515,6 +634,183 @@ namespace NotepadClone
             }
             catch (Exception) { tom = null; } // styling is cosmetic; never break editing over it
             finally { Styling = false; }
+        }
+
+        // ---------- formatted editing ----------
+        // Links have no in-text marker, so each is a live TOM range (it moves with edits) plus its URL
+        readonly List<KeyValuePair<dynamic, string>> links = new List<KeyValuePair<dynamic, string>>();
+        float BaseSize { get { return Font.SizeInPoints; } }
+
+        // Runs fn with undo suspended and drawing frozen, so loading or recoloring isn't an undoable edit
+        void Quietly(Action<dynamic> fn)
+        {
+            var doc = Doc; if (doc == null) return;
+            Styling = true;
+            doc.Undo(tomSuspend); doc.Freeze();
+            try { fn(doc); }
+            finally { doc.Unfreeze(); doc.Undo(tomResume); Styling = false; }
+        }
+
+        void ResetFormat(dynamic f, Palette P)
+        {
+            f.Bold = 0; f.Italic = 0; f.StrikeThrough = 0; f.Underline = 0;
+            f.Name = Font.Name; f.Size = BaseSize; f.ForeColor = Rgb(P.Text); f.BackColor = tomAutoColor;
+        }
+
+        public void LoadMarkdown(string md, Palette P)
+        {
+            var fmts = new List<MdFormat.Fmt>();
+            string text = MdFormat.Parse(md, fmts);
+            Styling = true; Text = text; Styling = false;
+            links.Clear();
+            Quietly(doc =>
+            {
+                int n = text.Length;
+                ResetFormat(doc.Range(0, n + 1).Font, P);
+                foreach (var fm in fmts)
+                {
+                    int a = Math.Min(fm.Start, n), b = Math.Min(fm.Start + fm.Length, n + 1); // n + 1: the final paragraph mark
+                    if (b <= a) continue;
+                    dynamic r = doc.Range(a, b); var f = r.Font;
+                    if (fm.CodeBlock || (fm.Attr & MdFormat.A.Code) != 0) { f.Name = CodeFont; f.BackColor = Rgb(P.Hover); }
+                    if ((fm.Attr & MdFormat.A.Bold) != 0 || fm.Heading > 0) f.Bold = tomTrue;
+                    if ((fm.Attr & MdFormat.A.Italic) != 0) f.Italic = tomTrue;
+                    if ((fm.Attr & MdFormat.A.Strike) != 0) f.StrikeThrough = tomTrue;
+                    if (fm.Heading > 0) f.Size = BaseSize * MdFormat.HeadScale[fm.Heading];
+                    if (fm.Url != null) { f.ForeColor = Rgb(P.Accent); f.Underline = 1; links.Add(new KeyValuePair<dynamic, string>(r, fm.Url)); }
+                }
+            });
+            ClearUndo();
+        }
+
+        public string ToMarkdown() { bool formatted; return ToMarkdown(out formatted); }
+
+        // formatted: whether anything would be lost by saving as plain text
+        public string ToMarkdown(out bool formatted)
+        {
+            string s = Text; int n = s.Length;
+            var at = new MdFormat.A[n + 1]; var url = new string[n + 1]; var ratio = new float[n + 1];
+            formatted = false;
+            var doc = Doc;
+            if (doc != null)
+            {
+                float bs = BaseSize;
+                int story = (int)doc.Range(0, int.MaxValue).End, pos = 0;
+                while (pos < story)
+                {
+                    dynamic r = doc.Range(pos, pos);
+                    if ((int)r.MoveEnd(tomCharFormat, 1) == 0) break;
+                    int b = (int)r.End; if (b <= pos) break;
+                    var f = r.Font;
+                    var v = MdFormat.A.None;
+                    if ((int)f.Bold == tomTrue) v |= MdFormat.A.Bold;
+                    if ((int)f.Italic == tomTrue) v |= MdFormat.A.Italic;
+                    if ((int)f.StrikeThrough == tomTrue) v |= MdFormat.A.Strike;
+                    if ((int)f.BackColor != tomAutoColor) v |= MdFormat.A.Code;
+                    float rt = (float)f.Size / bs;
+                    for (int i = pos; i < b && i <= n; i++) { at[i] = v; ratio[i] = rt; }
+                    pos = b;
+                }
+                links.RemoveAll(l => (int)l.Key.End <= (int)l.Key.Start); // link text was deleted
+                foreach (var l in links) for (int i = Math.Max(0, (int)l.Key.Start); i < Math.Min(n, (int)l.Key.End); i++) url[i] = l.Value;
+            }
+            for (int i = 0; i < n && !formatted; i++)
+                formatted = at[i] != MdFormat.A.None || url[i] != null || MdFormat.HeadingLevel(ratio[i]) > 0;
+            return MdFormat.Serialize(s, at, url, ratio);
+        }
+
+        public void ToggleAttr(MdFormat.A a, Palette P)
+        {
+            var doc = Doc; if (doc == null) return;
+            var f = doc.Selection.Font; // with no selection this sets the format for what's typed next
+            switch (a)
+            {
+                case MdFormat.A.Bold: f.Bold = (int)f.Bold == tomTrue ? 0 : tomTrue; break;
+                case MdFormat.A.Italic: f.Italic = (int)f.Italic == tomTrue ? 0 : tomTrue; break;
+                case MdFormat.A.Strike: f.StrikeThrough = (int)f.StrikeThrough == tomTrue ? 0 : tomTrue; break;
+                case MdFormat.A.Code:
+                    if ((int)f.BackColor == Rgb(P.Hover)) { f.BackColor = tomAutoColor; f.Name = Font.Name; }
+                    else { f.BackColor = Rgb(P.Hover); f.Name = CodeFont; }
+                    break;
+            }
+        }
+
+        dynamic SelectedLines(dynamic doc) { dynamic r = doc.Range((int)doc.Selection.Start, (int)doc.Selection.End); r.Expand(tomParagraph); return r; }
+
+        public void SetHeading(int level)
+        {
+            var doc = Doc; if (doc == null) return;
+            var f = SelectedLines(doc).Font;
+            f.Size = BaseSize * MdFormat.HeadScale[level]; f.Bold = level > 0 ? tomTrue : 0;
+        }
+
+        public void ToggleCodeBlock(Palette P)
+        {
+            var doc = Doc; if (doc == null) return;
+            var f = SelectedLines(doc).Font;
+            if ((int)f.BackColor == Rgb(P.Hover)) { f.BackColor = tomAutoColor; f.Name = Font.Name; }
+            else { f.BackColor = Rgb(P.Hover); f.Name = CodeFont; }
+        }
+
+        public void AddLink(string url, Palette P)
+        {
+            var doc = Doc; if (doc == null) return;
+            dynamic sel = doc.Selection;
+            if ((int)sel.End == (int)sel.Start) sel.Text = url; // no selection: the URL is the link text
+            dynamic r = doc.Range((int)sel.Start, (int)sel.End);
+            r.Font.ForeColor = Rgb(P.Accent); r.Font.Underline = 1;
+            links.Add(new KeyValuePair<dynamic, string>(r, url));
+        }
+
+        public void ClearFormat(Palette P, bool all = false)
+        {
+            var doc = Doc; if (doc == null) return;
+            dynamic r = all ? doc.Range(0, int.MaxValue) : doc.Range((int)doc.Selection.Start, (int)doc.Selection.End);
+            int a = r.Start, b = r.End;
+            ResetFormat(r.Font, P);
+            if (!all) // headings and code blocks belong to whole lines
+            {
+                r.Expand(tomParagraph);
+                r.Font.Size = BaseSize; r.Font.BackColor = tomAutoColor; r.Font.Name = Font.Name;
+            }
+            links.RemoveAll(l => (int)l.Key.Start < b && (int)l.Key.End > a);
+        }
+
+        // After a theme change: text color, link color and code background follow the palette
+        public void Recolor(Palette P)
+        {
+            Quietly(doc =>
+            {
+                int story = (int)doc.Range(0, int.MaxValue).End, pos = 0;
+                doc.Range(0, story).Font.ForeColor = Rgb(P.Text);
+                while (pos < story)
+                {
+                    dynamic r = doc.Range(pos, pos);
+                    if ((int)r.MoveEnd(tomCharFormat, 1) == 0) break;
+                    int b = (int)r.End; if (b <= pos) break;
+                    if ((int)r.Font.BackColor != tomAutoColor) r.Font.BackColor = Rgb(P.Hover);
+                    pos = b;
+                }
+                foreach (var l in links) l.Key.Font.ForeColor = Rgb(P.Accent);
+            });
+        }
+
+        // A new line after a heading starts as body text, like Notepad
+        public bool Formatted;
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            base.OnKeyDown(e);
+            if (!Formatted || e.KeyCode != Keys.Enter || e.Modifiers != Keys.None) return;
+            BeginInvoke((Action)(() =>
+            {
+                var doc = Doc; if (doc == null) return;
+                dynamic r = doc.Range((int)doc.Selection.Start, (int)doc.Selection.Start); r.Expand(tomParagraph);
+                if (((string)r.Text).Trim().Length == 0 && Math.Abs((float)r.Font.Size - BaseSize) > 0.01f)
+                {
+                    r.Font.Size = BaseSize; r.Font.Bold = 0;
+                    doc.Selection.Font.Size = BaseSize; doc.Selection.Font.Bold = 0;
+                }
+            }));
         }
     }
 
@@ -526,11 +822,12 @@ namespace NotepadClone
         readonly List<TabDoc> docs = new List<TabDoc>();
         readonly ToolStripMenuItem recentMenu = new ToolStripMenuItem("최근 파일");
         MenuStrip menu;
-        ToolStripMenuItem wrapItem, statusItem, darkItem, previewBtn, liveItem, marksItem;
+        ToolStripMenuItem wrapItem, statusItem, darkItem, previewBtn, marksItem;
         readonly List<ToolStripItem> iconItems = new List<ToolStripItem>();
         Font editorFont = new Font("Consolas", 11f);
         float zoom = 1f;
-        bool wordWrap = true, dark, previewOn, liveFormat = true, showMarks;
+        bool wordWrap = true, dark, previewOn;
+        bool showMarks; // symbol view: edit Markdown source instead of formatted text
         readonly Timer restyleTimer = new Timer { Interval = 150 };
         Palette P = Palette.Light;
         TabDoc active;
@@ -567,7 +864,8 @@ namespace NotepadClone
             restyleTimer.Tick += (s, e) =>
             {
                 if (Cur != null && Cur.Box.Composing) return; // try again on the next tick, once the syllable is done
-                restyleTimer.Stop(); if (Cur != null) { Restyle(Cur); UpdateStatus(); }
+                restyleTimer.Stop();
+                if (Cur != null) { if (showMarks) Restyle(Cur); UpdateStatus(); }
             };
             ApplyTheme();
             Resize += (s, e) => strip.Invalidate();
@@ -677,11 +975,9 @@ namespace NotepadClone
             wrapItem = Item("자동 줄 바꿈", Keys.None, (s, e) => SetWrap(!wordWrap));
             wrapItem.Checked = wordWrap;
             darkItem = Item("어두운 테마", Keys.None, (s, e) => SetDark(!dark));
-            liveItem = Item("서식 표시", Keys.None, (s, e) => { liveFormat = !liveFormat; liveItem.Checked = liveFormat; RestyleAll(); });
-            liveItem.Checked = liveFormat;
-            marksItem = Item("서식 기호 표시", Keys.None, (s, e) => { showMarks = !showMarks; marksItem.Checked = showMarks; RestyleAll(); });
+            marksItem = Item("Markdown 기호 표시", Keys.None, (s, e) => SetShowMarks(!showMarks));
             previewBtn = Item("서식 미리 보기", Keys.Control | Keys.Shift | Keys.M, (s, e) => TogglePreview());
-            view.DropDownItems.AddRange(new ToolStripItem[] { statusItem, wrapItem, darkItem, new ToolStripSeparator(), liveItem, marksItem, previewBtn });
+            view.DropDownItems.AddRange(new ToolStripItem[] { statusItem, wrapItem, darkItem, new ToolStripSeparator(), marksItem, previewBtn });
 
             foreach (var top in new[] { file, edit, view }) top.Padding = new Padding(10, 0, 10, 0);
             m.Items.AddRange(new ToolStripItem[] { file, edit, view });
@@ -735,8 +1031,8 @@ namespace NotepadClone
 
             var table = IconBtn(Ui.Table, "표", null, true);
             table.DropDownItems.Add(Item("표 삽입 (3x2)", Keys.None, (s, e) => InsertText("\r\n| 제목 1 | 제목 2 | 제목 3 |\r\n| --- | --- | --- |\r\n|  |  |  |\r\n|  |  |  |\r\n")));
-            table.DropDownItems.Add(Item("인라인 코드", Keys.None, (s, e) => WrapSel("`", "`")));
-            table.DropDownItems.Add(Item("코드 블록", Keys.None, (s, e) => WrapSel("```\r\n", "\r\n```")));
+            table.DropDownItems.Add(Item("인라인 코드", Keys.None, (s, e) => Format(MdFormat.A.Code, "`")));
+            table.DropDownItems.Add(Item("코드 블록", Keys.None, (s, e) => { if (showMarks) WrapSel("```\r\n", "\r\n```"); else { EnsureEditing(); Cur.Box.ToggleCodeBlock(P); Changed(); } }));
             table.DropDownItems.Add(Item("인용", Keys.None, (s, e) => ToggleLinePrefix("> ")));
             table.DropDownItems.Add(Item("가로줄", Keys.None, (s, e) => InsertText("\r\n\r\n---\r\n\r\n")));
             foreach (ToolStripItem d in table.DropDownItems) d.Font = Ui.Body;
@@ -752,9 +1048,9 @@ namespace NotepadClone
 
             m.Items.AddRange(new ToolStripItem[] {
                 formatSpacer, head, list,
-                IconBtn(Ui.Bold, "굵게 (Ctrl+B)", (s, e) => WrapSel("**", "**")),
-                IconBtn(Ui.Italic, "기울임꼴 (Ctrl+I)", (s, e) => WrapSel("*", "*")),
-                IconBtn(Ui.Strike, "취소선", (s, e) => WrapSel("~~", "~~")),
+                IconBtn(Ui.Bold, "굵게 (Ctrl+B)", (s, e) => Format(MdFormat.A.Bold, "**")),
+                IconBtn(Ui.Italic, "기울임꼴 (Ctrl+I)", (s, e) => Format(MdFormat.A.Italic, "*")),
+                IconBtn(Ui.Strike, "취소선", (s, e) => Format(MdFormat.A.Strike, "~~")),
                 IconBtn(Ui.Link, "링크 (Ctrl+K)", (s, e) => InsertLink()),
                 table,
                 IconBtn(Ui.Clear, "서식 지우기", (s, e) => ClearFormatting()),
@@ -774,8 +1070,8 @@ namespace NotepadClone
         {
             if (Cur != null)
             {
-                if (keyData == (Keys.Control | Keys.B)) { WrapSel("**", "**"); return true; }
-                if (keyData == (Keys.Control | Keys.I)) { WrapSel("*", "*"); return true; }
+                if (keyData == (Keys.Control | Keys.B)) { Format(MdFormat.A.Bold, "**"); return true; }
+                if (keyData == (Keys.Control | Keys.I)) { Format(MdFormat.A.Italic, "*"); return true; }
                 if (keyData == (Keys.Control | Keys.K)) { InsertLink(); return true; }
             }
             return base.ProcessCmdKey(ref msg, keyData);
@@ -789,7 +1085,7 @@ namespace NotepadClone
             {
                 Dock = DockStyle.Fill, ScrollBars = wordWrap ? RichTextBoxScrollBars.Vertical : RichTextBoxScrollBars.Both, WordWrap = wordWrap,
                 AcceptsTab = true, HideSelection = false, BorderStyle = BorderStyle.None,
-                Font = ZoomedFont(), BackColor = P.Editor, ForeColor = P.Text, Visible = false
+                Font = editorFont, BackColor = P.Editor, ForeColor = P.Text, Visible = false, Formatted = !showMarks
             };
             d.Box.TextChanged += (s, e) =>
             {
@@ -797,7 +1093,7 @@ namespace NotepadClone
                 if (!d.Dirty) { d.Dirty = true; strip.Invalidate(); }
                 UpdateStatus(); restyleTimer.Stop(); restyleTimer.Start();
             };
-            d.Box.HandleCreated += (s, e) => Restyle(d);
+            d.Box.HandleCreated += (s, e) => { ApplyZoom(d); Restyle(d); };
             d.Box.KeyUp += (s, e) => UpdateStatus();
             d.Box.MouseUp += (s, e) => UpdateStatus();
             d.Box.HandleCreated += (s, e) => SetWindowTheme(d.Box.Handle, dark ? "DarkMode_Explorer" : "Explorer", null);
@@ -852,7 +1148,10 @@ namespace NotepadClone
 
             var d = Cur != null && Cur.Path == null && !Cur.Dirty && Cur.Box.TextLength == 0 ? Cur : NewTab();
             d.Path = path; d.Enc = enc; d.Eol = eol;
-            d.Box.Text = text.Replace("\r\n", "\n").Replace("\r", "\n");
+            text = text.Replace("\r\n", "\n").Replace("\r", "\n");
+            // .md files open formatted; anything else is plain text, even if it contains * or #
+            if (IsMd(path)) d.Box.LoadMarkdown(text, P); else { d.Box.Text = text; d.Box.ClearFormat(P, true); }
+            if (showMarks) { string md = d.Box.ToMarkdown(); d.Box.Text = md; }
             d.Box.Select(0, 0);
             Restyle(d);
             d.Box.ClearUndo();
@@ -878,18 +1177,77 @@ namespace NotepadClone
             return "ANSI";
         }
 
+        static bool IsMd(string path) { return path != null && Regex.IsMatch(path, @"\.(md|markdown)$", RegexOptions.IgnoreCase); }
+
+        // The document as plain text and as Markdown, and whether plain text would lose formatting
+        void GetContent(TabDoc d, out string plain, out string md, out bool formatted)
+        {
+            if (showMarks)
+            {
+                md = d.Box.Text;
+                var fmts = new List<MdFormat.Fmt>();
+                plain = MdFormat.Parse(md, fmts);
+                formatted = fmts.Count > 0;
+            }
+            else { plain = d.Box.Text; md = d.Box.ToMarkdown(out formatted); }
+        }
+
+        string AskSavePath(TabDoc d, bool markdown, string name)
+        {
+            using (var dlg = new SaveFileDialog { Filter = "텍스트 문서 (*.txt)|*.txt|Markdown (*.md)|*.md|모든 파일 (*.*)|*.*", FilterIndex = markdown ? 2 : 1, FileName = name, AddExtension = true, DefaultExt = markdown ? "md" : "txt",
+                InitialDirectory = d.Path != null ? System.IO.Path.GetDirectoryName(d.Path) : "" })
+                return dlg.ShowDialog(this) == DialogResult.OK ? dlg.FileName : null;
+        }
+
+        // Saving formatted text as a non-Markdown file: Yes = save as Markdown, No = save as text, Cancel
+        DialogResult AskKeepFormatting()
+        {
+            using (var f = new Form { Text = "메모장", FormBorderStyle = FormBorderStyle.FixedDialog, ClientSize = new Size(520, 200), StartPosition = FormStartPosition.CenterParent, MaximizeBox = false, MinimizeBox = false, ShowInTaskbar = false, Font = Ui.Body, BackColor = P.Menu, ForeColor = P.Text })
+            {
+                var title = new Label { Text = "서식을 유지하려면 Markdown으로 저장", Font = new Font(Ui.Body.FontFamily, 14f), Left = 24, Top = 18, Width = 470, Height = 32 };
+                var body = new Label { Text = "텍스트 파일입니다. 굵게 및 제목 등의 현재 서식을 유지하려면 Markdown 파일(.md)로 저장합니다.", Left = 24, Top = 56, Width = 470, Height = 40 };
+                var warn = new Label { Text = "일반 텍스트 파일로 저장하면 모든 서식이 손실됩니다.", Font = new Font(Ui.Body, FontStyle.Bold), Left = 24, Top = 98, Width = 470, Height = 22 };
+                var md = new Button { Text = "Markdown 파일로...", Left = 24, Top = 148, Width = 150, Height = 32, DialogResult = DialogResult.Yes, BackColor = P.Accent, ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+                var txt = new Button { Text = "텍스트 파일로 저장", Left = 184, Top = 148, Width = 150, Height = 32, DialogResult = DialogResult.No, FlatStyle = FlatStyle.Flat };
+                var cancel = new Button { Text = "취소", Left = 344, Top = 148, Width = 150, Height = 32, DialogResult = DialogResult.Cancel, FlatStyle = FlatStyle.Flat };
+                md.FlatAppearance.BorderSize = 0;
+                f.Controls.AddRange(new Control[] { title, body, warn, md, txt, cancel });
+                f.AcceptButton = md; f.CancelButton = cancel;
+                return f.ShowDialog(this);
+            }
+        }
+
         bool Save(TabDoc d, bool saveAs)
         {
             if (d == null) return false;
-            if (saveAs || d.Path == null)
+            string plain, md; bool formatted;
+            GetContent(d, out plain, out md, out formatted);
+            string path = d.Path;
+            if (saveAs || path == null)
             {
-                using (var dlg = new SaveFileDialog { Filter = "텍스트 문서 (*.txt)|*.txt|Markdown (*.md)|*.md|모든 파일 (*.*)|*.*", FileName = d.Path == null ? "*.txt" : d.Title })
+                string name = path == null ? "제목 없음" + (formatted ? ".md" : ".txt") : System.IO.Path.GetFileName(path);
+                path = AskSavePath(d, formatted && path == null || IsMd(path), name);
+                if (path == null) return false;
+            }
+            bool asMd = IsMd(path);
+            if (!asMd && formatted)
+            {
+                var choice = AskKeepFormatting();
+                if (choice == DialogResult.Cancel) return false;
+                if (choice == DialogResult.Yes)
                 {
-                    if (dlg.ShowDialog(this) != DialogResult.OK) return false;
-                    d.Path = dlg.FileName;
+                    path = AskSavePath(d, true, System.IO.Path.GetFileNameWithoutExtension(path) + ".md");
+                    if (path == null) return false;
+                    asMd = true;
                 }
             }
-            File.WriteAllText(d.Path, d.Box.Text.Replace("\r\n", "\n").Replace("\n", d.Eol), d.Enc);
+            File.WriteAllText(path, (asMd ? md : plain).Replace("\n", d.Eol), d.Enc);
+            if (!asMd && formatted) // saved without formatting, so drop it from the editor too
+            {
+                if (showMarks) { d.Box.Styling = true; d.Box.Text = MdFormat.Escape(plain); d.Box.Styling = false; Restyle(d); }
+                else d.Box.ClearFormat(P, true);
+            }
+            d.Path = path;
             d.Dirty = false;
             strip.Invalidate(); UpdateTitle(); UpdateStatus();
             AddRecent(d.Path);
@@ -970,8 +1328,10 @@ namespace NotepadClone
                 var src = Cur.Box.Text; var sb = new StringBuilder(); int i = 0, n = 0, j;
                 while ((j = src.IndexOf(lastFind, i, cmp)) >= 0) { sb.Append(src, i, j - i).Append(repBox.Text); i = j + lastFind.Length; n++; }
                 if (n == 0) return;
-                sb.Append(src, i, src.Length - i);
-                Cur.Box.SelectAll(); Cur.Box.SelectedText = sb.ToString();
+                // Replace match by match from the end, so the formatting of the rest of the text survives
+                var b = Cur.Box; var hits = new List<int>(); i = 0;
+                while ((j = src.IndexOf(lastFind, i, cmp)) >= 0) { hits.Add(j); i = j + lastFind.Length; }
+                for (int k = hits.Count - 1; k >= 0; k--) { b.Select(hits[k], lastFind.Length); b.SelectedText = repBox.Text; }
             };
             f.AcceptButton = next;
             findForm = f;
@@ -1016,15 +1376,31 @@ namespace NotepadClone
         void ChooseFont()
         {
             using (var dlg = new FontDialog { Font = editorFont })
-                if (dlg.ShowDialog(this) == DialogResult.OK) { editorFont = dlg.Font; SetZoom(zoom); }
+                if (dlg.ShowDialog(this) == DialogResult.OK)
+                {
+                    editorFont = dlg.Font;
+                    // Setting Font resets all character formatting, so carry it across as Markdown
+                    foreach (var d in docs)
+                    {
+                        bool dirty = d.Dirty;
+                        string md = showMarks ? null : d.Box.ToMarkdown();
+                        d.Box.Styling = true; d.Box.Font = editorFont; d.Box.Styling = false;
+                        if (md != null) d.Box.LoadMarkdown(md, P);
+                        Restyle(d); ApplyZoom(d);
+                        d.Dirty = dirty;
+                    }
+                }
         }
 
-        Font ZoomedFont() { return new Font(editorFont.FontFamily, editorFont.Size * zoom, editorFont.Style); }
+        // RichEdit's own zoom, so the font size (and with it heading sizes) stays put
+        const int EM_SETZOOM = 0x0400 + 225;
+        [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, IntPtr l);
+        void ApplyZoom(TabDoc d) { if (d.Box.IsHandleCreated) SendMessage(d.Box.Handle, EM_SETZOOM, (IntPtr)(int)Math.Round(zoom * 100), (IntPtr)100); }
 
         void SetZoom(float z)
         {
             zoom = Math.Max(0.1f, Math.Min(5f, z));
-            foreach (var d in docs) { d.Box.Font = ZoomedFont(); Restyle(d); }
+            foreach (var d in docs) ApplyZoom(d);
             UpdateStatus();
         }
 
@@ -1056,9 +1432,37 @@ namespace NotepadClone
             if (previewOn) ShowPreview();
         }
 
-        // ---------- live formatting ----------
-        void Restyle(TabDoc d) { if (d.Box.IsHandleCreated) d.Box.Restyle(liveFormat, P, showMarks); }
+        // ---------- formatting ----------
+        // Symbol view styles the Markdown source; formatted view only needs colors to follow the theme
+        void Restyle(TabDoc d) { if (d.Box.IsHandleCreated) { if (showMarks) d.Box.Restyle(P); else d.Box.Recolor(P); } }
         void RestyleAll() { foreach (var d in docs) Restyle(d); }
+
+        // Switches every tab between formatted text and its Markdown source
+        void SetShowMarks(bool on)
+        {
+            if (on == showMarks) return;
+            EnsureEditing();
+            foreach (var d in docs)
+            {
+                bool dirty = d.Dirty;
+                if (on) { string md = d.Box.ToMarkdown(); d.Box.Styling = true; d.Box.Text = md; d.Box.Styling = false; d.Box.ClearUndo(); }
+                else d.Box.LoadMarkdown(d.Box.Text, P);
+                d.Box.Formatted = !on;
+                d.Dirty = dirty;
+            }
+            showMarks = on; marksItem.Checked = on;
+            RestyleAll(); UpdateStatus();
+        }
+
+        void Changed() { var d = Cur; if (d != null && !d.Dirty) { d.Dirty = true; strip.Invalidate(); } }
+
+        // Bold, italic, strikethrough, inline code: real formatting, or markers in the symbol view
+        void Format(MdFormat.A a, string marker)
+        {
+            EnsureEditing();
+            if (showMarks) { WrapSel(marker, marker); return; }
+            Cur.Box.ToggleAttr(a, P); Changed(); Cur.Box.Focus();
+        }
 
         // ---------- formatting commands ----------
         void EnsureEditing() { if (previewOn) TogglePreview(); }
@@ -1204,12 +1608,23 @@ namespace NotepadClone
             };
             Func<string, bool> has = l => kind(l) == kind(prefix);
             bool all = lines.All(has);
-            ReplaceLines((l, i) => all ? ListPrefix.Replace(l, "$1") : (prefix == "1. " ? (i + 1) + ". " : prefix) + ListPrefix.Replace(l, "$1"));
+            // Edit only each line's prefix, bottom-up so earlier offsets stay valid; the rest keeps its formatting
+            var b = Cur.Box; var starts = new int[lines.Length]; int delta = 0;
+            for (int i = 0, p = a; i < lines.Length; p += lines[i].Length + 1, i++) starts[i] = p;
+            for (int i = lines.Length - 1; i >= 0; i--)
+            {
+                var m = ListPrefix.Match(lines[i]);
+                int at = starts[i] + (m.Success ? m.Groups[1].Length : 0), old = m.Success ? m.Groups[2].Length : 0;
+                string np = all ? "" : prefix == "1. " ? (i + 1) + ". " : prefix;
+                b.Select(at, old); b.SelectedText = np; delta += np.Length - old;
+            }
+            b.Select(a, e - a + delta); b.Focus();
         }
 
         void SetHeading(int n)
         {
-            ReplaceLines((l, i) => (n > 0 ? new string('#', n) + " " : "") + Regex.Replace(l, @"^#{1,6}\s+", ""));
+            if (showMarks) { ReplaceLines((l, i) => (n > 0 ? new string('#', n) + " " : "") + Regex.Replace(l, @"^#{1,6}\s+", "")); return; }
+            EnsureEditing(); Cur.Box.SetHeading(n); Changed(); Cur.Box.Focus();
         }
 
         void InsertLink()
@@ -1223,6 +1638,7 @@ namespace NotepadClone
                 f.Controls.AddRange(new Control[] { new Label { Text = "주소:", Left = 10, Top = 8 }, url, ok });
                 f.AcceptButton = ok;
                 if (f.ShowDialog(this) != DialogResult.OK || url.Text.Trim().Length == 0) return;
+                if (!showMarks) { b.AddLink(url.Text.Trim(), P); Changed(); b.Focus(); return; }
                 string text = sel.Length > 0 ? sel : url.Text.Trim();
                 int a = b.SelectionStart;
                 b.SelectedText = "[" + text + "](" + url.Text.Trim() + ")";
@@ -1235,6 +1651,7 @@ namespace NotepadClone
             EnsureEditing();
             var b = Cur.Box;
             if (b.SelectionLength == 0) { MessageBox.Show(this, "서식을 지울 텍스트를 선택하세요.", "메모장"); return; }
+            if (!showMarks) { b.ClearFormat(P); Changed(); return; }
             string s = b.SelectedText;
             s = Regex.Replace(s, @"(?m)^#{1,6}\s+", "");
             s = Regex.Replace(s, @"(?m)^(\s*)([-*+] \[[ xX]\] |[-*+] |\d+\. |> )", "$1");
@@ -1259,7 +1676,7 @@ namespace NotepadClone
             Func<Color, string> hex = c => string.Format("#{0:X2}{1:X2}{2:X2}", c.R, c.G, c.B);
             preview.DocumentText = "<!doctype html><meta charset=utf-8><meta http-equiv=X-UA-Compatible content=IE=edge><style>body{font:15px 'Segoe UI Variable Text','Segoe UI','Malgun Gothic',sans-serif;line-height:1.6;color:" + hex(P.Text) + ";background:" + hex(P.Editor) +
                 ";padding:0 8px;margin:0}code{font-family:Consolas,monospace;background:" + hex(P.Hover) + ";padding:1px 4px}pre{background:" + hex(P.Hover) + ";padding:8px}blockquote{margin:0;padding-left:10px;border-left:3px solid " + hex(P.Border) + ";opacity:.8}table{border-collapse:collapse}td,th{border:1px solid " + hex(P.MenuBorder) + ";padding:3px 8px}a{color:" + hex(P.Accent) + "}</style>" +
-                MarkdownToHtml(d.Box.Text);
+                MarkdownToHtml(showMarks ? d.Box.Text : d.Box.ToMarkdown());
         }
 
         static string Esc(string s) { return System.Net.WebUtility.HtmlEncode(s); }

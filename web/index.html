@@ -98,6 +98,8 @@ svg.chev { width: 10px; height: 10px; }
 .findbar label { display: flex; gap: 4px; align-items: center; color: var(--muted); }
 .findbar .msg { color: var(--danger); font-size: 12px; }
 
+.main { flex: 1; min-height: 0; display: flex; }
+.content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .editor { flex: 1; min-height: 0; background: var(--surface); }
 textarea { width: 100%; height: 100%; resize: none; border: 0; padding: 10px 14px; background: var(--surface); color: var(--fg);
   font-family: var(--mono); font-size: 14.67px; line-height: 1.4; tab-size: 4; outline: none; scrollbar-width: thin; }
@@ -133,6 +135,31 @@ textarea.nowrap { white-space: pre; overflow-wrap: normal; overflow-x: auto; }
 .dialog .row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .dialog .row button { padding: 6px 14px; border-radius: 5px; border: 1px solid var(--line); }
 .dialog .row button.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+.side { width: 0; flex-shrink: 0; overflow: hidden; background: var(--menu); transition: width .2s ease; }
+.side.open { width: 320px; border-left: 1px solid var(--menu-line); }
+.side > div { width: 319px; height: 100%; display: flex; flex-direction: column; }
+.side header { height: 48px; padding: 0 8px 0 16px; display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.side header b { flex: 1; font-size: 15px; }
+.side header button { height: 30px; border-radius: 4px; }
+.side header button:hover { background: var(--hover); }
+.side .clr { padding: 0 8px; color: var(--muted); font-size: 12px; }
+.side .cx { width: 30px; display: grid; place-items: center; }
+.side .cx svg { width: 12px; height: 12px; }
+.side .list { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.side .none { padding: 24px 16px; text-align: center; color: var(--muted); }
+.rrow { position: relative; display: flex; align-items: center; gap: 10px; height: 54px; margin: 0 6px; padding: 0 10px; border-radius: 6px; cursor: pointer; }
+.rrow:hover { background: var(--hover); }
+.rrow svg.doc { width: 28px; height: 34px; flex-shrink: 0; fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-linejoin: round; }
+.rrow svg.doc text { fill: var(--muted); stroke: none; font: 600 8px var(--ui); }
+.rrow.md svg.doc { stroke: var(--accent); }
+.rrow.md svg.doc text { fill: var(--accent); }
+.rrow .txt { flex: 1; min-width: 0; }
+.rrow .nm { font-weight: 600; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rrow .wh { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+.rrow .rx { display: none; width: 28px; height: 28px; place-items: center; border-radius: 4px; flex-shrink: 0; }
+.rrow .rx svg { width: 10px; height: 10px; }
+.rrow:hover .rx, .rrow .rx:focus-visible { display: grid; }
+.rrow .rx:hover { background: var(--pressed); }
 .toast { position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%); background: var(--fg); color: var(--surface); padding: 8px 14px; border-radius: 6px; z-index: 30; max-width: calc(100% - 32px); }
 </style>
 
@@ -150,8 +177,13 @@ textarea.nowrap { white-space: pre; overflow-wrap: normal; overflow-x: auto; }
     <span class="msg" id="findMsg"></span>
     <button id="findClose" aria-label="찾기 닫기">✕</button>
   </div>
-  <div class="editor" id="editorWrap"><pre class="hl" id="hl" aria-hidden="true"><div></div></pre><textarea id="ed" spellcheck="false" aria-label="문서 내용"></textarea></div>
-  <div class="preview" id="preview" hidden></div>
+  <div class="main">
+    <div class="content">
+      <div class="editor" id="editorWrap"><pre class="hl" id="hl" aria-hidden="true"><div></div></pre><textarea id="ed" spellcheck="false" aria-label="문서 내용"></textarea></div>
+      <div class="preview" id="preview" hidden></div>
+    </div>
+    <aside class="side" id="side" aria-label="최근 파일"><div></div></aside>
+  </div>
   <div class="status" id="status">
     <span id="stPos"></span><span id="stChars"></span><span id="stKind">일반 텍스트</span><span id="stZoom"></span><span id="stEol"></span><span id="stEnc"></span>
   </div>
@@ -181,7 +213,7 @@ let state = store.get('np.state', null) || {
 let settings = Object.assign({ wrap: true, statusBar: true, zoom: 1, theme: 'system', live: true }, store.get('np.settings', {}));
 let blockMode = false, blockUnwrapped = false; // block selection toggle, and an Alt+drag block: lines are shown unwrapped while either lasts
 const shownWrap = () => settings.wrap && !blockMode && !blockUnwrapped;
-let recent = store.get('np.recent', []);
+let recent = store.get('np.recent', []).map(r => typeof r === 'string' ? { name: r, when: 0 } : r).slice(0, 30);
 const handles = {}; // File System Access handles (not persisted)
 const undoStacks = {}; // per-tab edit history is native; we keep scroll/selection only
 
@@ -345,7 +377,7 @@ async function openBuffer(name, buf, handle) {
   if (c && !c.name && !c.dirty && c.text === '') { Object.assign(c, { name, text: norm, enc, eol, sel: [0, 0], scroll: 0 }); t = c; loadTabToEditor(); }
   else t = newTab({ name, text: norm, enc, eol });
   if (handle) handles[t.id] = handle;
-  addRecent(name); renderTabs(); persistSoon();
+  addRecent(name, handle); renderTabs(); persistSoon();
 }
 async function openFile() {
   if (window.showOpenFilePicker) {
@@ -396,7 +428,7 @@ async function save(saveAs) {
       a.download = t.name || '제목 없음.txt'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       t.name = a.download;
     }
-    t.dirty = false; addRecent(t.name); renderTabs(); persistSoon(); toast('저장했습니다: ' + t.name);
+    t.dirty = false; addRecent(t.name, handles[t.id]); renderTabs(); persistSoon(); toast('저장했습니다: ' + t.name);
     return true;
   } catch (e) {
     if (e.name === 'AbortError') return false;
@@ -410,7 +442,72 @@ async function save(saveAs) {
 function copyText(s) {
   navigator.clipboard.writeText(s).then(() => toast('클립보드에 복사했습니다'), () => { ed.select(); toast('Ctrl+C를 눌러 복사하세요'); });
 }
-function addRecent(name) { recent = [name, ...recent.filter(n => n !== name)].slice(0, 10); }
+function addRecent(name, handle) {
+  recent = [{ name, when: Date.now() }, ...recent.filter(r => r.name !== name)];
+  recent.slice(30).forEach(r => idb('delete', r.name)); recent = recent.slice(0, 30);
+  if (handle) idb('put', name, handle);
+  renderRecent();
+}
+
+// ---------- recent files sidebar ----------
+function idb(op, key, val) { // handles survive reloads in IndexedDB; failures are ignored (private mode, no support)
+  return new Promise(res => {
+    try {
+      const r = indexedDB.open('tnote', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('handles');
+      r.onerror = () => res(null);
+      r.onsuccess = () => {
+        const st = r.result.transaction('handles', op === 'get' ? 'readonly' : 'readwrite').objectStore('handles');
+        const q = op === 'get' ? st.get(key) : op === 'put' ? st.put(val, key) : st.delete(key);
+        q.onsuccess = () => res(q.result || null); q.onerror = () => res(null);
+      };
+    } catch { res(null); }
+  });
+}
+const fmtWhen = w => {
+  if (!w) return '이전에 연 파일';
+  const d = new Date(w), p = n => String(n).padStart(2, '0'), h = d.getHours();
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${h < 12 ? '오전' : '오후'} ${h % 12 || 12}:${p(d.getMinutes())}`;
+};
+function renderRecent() {
+  const side = $('side').firstChild; side.innerHTML = '';
+  const hd = document.createElement('header'), b = document.createElement('b'); b.textContent = '최근 파일'; hd.append(b);
+  if (recent.length) {
+    const c = document.createElement('button'); c.className = 'clr'; c.textContent = '모두 지우기';
+    c.onclick = () => { recent.forEach(r => idb('delete', r.name)); recent = []; persistSoon(); renderRecent(); };
+    hd.append(c);
+  }
+  const x = document.createElement('button'); x.className = 'cx'; x.innerHTML = ICON.close; x.title = '닫기'; x.setAttribute('aria-label', '닫기'); x.onclick = () => toggleRecent(false);
+  hd.append(x); side.append(hd);
+  const list = document.createElement('div'); list.className = 'list'; side.append(list);
+  if (!recent.length) { const e = document.createElement('div'); e.className = 'none'; e.textContent = '최근 파일이 없습니다'; list.append(e); return; }
+  recent.forEach(r => {
+    const ext = ((/\.([^.\\/]+)$/.exec(r.name) || [])[1] || 'txt').slice(0, 4).toLowerCase();
+    const row = document.createElement('div'); row.className = 'rrow' + (ext === 'md' ? ' md' : ''); row.tabIndex = 0; row.title = r.name;
+    row.innerHTML = `<svg class="doc" viewBox="0 0 28 34" aria-hidden="true"><path d="M4 1.5h13l7 7v24H4z"/><path d="M17 1.5v7h7"/><text x="14" y="26" text-anchor="middle"></text></svg><div class="txt"><div class="nm"></div><div class="wh"></div></div><button class="rx" aria-label="목록에서 제거" title="목록에서 제거">${ICON.close}</button>`;
+    row.querySelector('text').textContent = ext; row.querySelector('.nm').textContent = r.name; row.querySelector('.wh').textContent = fmtWhen(r.when);
+    row.onclick = () => openRecent(r.name);
+    row.onkeydown = e => { if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openRecent(r.name); } };
+    row.querySelector('.rx').onclick = e => { e.stopPropagation(); recent = recent.filter(q => q !== r); idb('delete', r.name); persistSoon(); renderRecent(); };
+    list.append(row);
+  });
+}
+function toggleRecent(on = !$('side').classList.contains('open')) {
+  $('side').classList.toggle('open', on);
+  const b = $('recentBtn'); if (b) b.setAttribute('aria-pressed', String(on));
+}
+async function openRecent(name) {
+  const h = await idb('get', name);
+  try {
+    if (h && h.queryPermission) {
+      let p = await h.queryPermission({ mode: 'readwrite' });
+      if (p !== 'granted') p = await h.requestPermission({ mode: 'readwrite' });
+      if (p === 'granted') { const f = await h.getFile(); await openBuffer(f.name, await f.arrayBuffer(), h); }
+      return;
+    }
+  } catch (e) { if (e.name === 'AbortError') return; }
+  toast('이 파일은 여기서 다시 열 수 없습니다. 열기(Ctrl+O)를 사용하세요');
+}
 
 // ---------- status ----------
 function updateStatus() {
@@ -756,6 +853,7 @@ const ICON = {
   clear: svg('<path d="M3 13.5L7 2.5h1l2.2 6"/><path d="M4.6 9.5h4.2"/><path d="M10.5 10.5l3 3M13.5 10.5l-3 3"/>'),
   block: svg('<path d="M2.5 2.5h2M6.5 2.5h3M11.5 2.5h2v2M13.5 6.5v3M13.5 11.5v2h-2M9.5 13.5h-3M4.5 13.5h-2v-2M2.5 9.5v-3M2.5 4.5v-2"/><rect x="5.5" y="5.5" width="5" height="5"/>'),
   eye: svg('<path d="M1.5 8.5C2.7 5.6 5.1 3.5 8 3.5s5.3 2.1 6.5 5"/><circle cx="8" cy="9.5" r="2.5"/>'),
+  clock: svg('<circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/>'),
   gear: svg('<circle cx="8" cy="8" r="2"/><path d="M6.9 1.5h2.2l.4 1.9 1.4.8 1.8-.6 1.1 1.9-1.4 1.3v1.6l1.4 1.3-1.1 1.9-1.8-.6-1.4.8-.4 1.9H6.9l-.4-1.9-1.4-.8-1.8.6-1.1-1.9 1.4-1.3V7.2L2.2 5.9l1.1-1.9 1.8.6 1.4-.8z"/>'),
   chev: svg('<path d="M3 6l5 5 5-5"/>', 'i chev')
 };
@@ -812,7 +910,9 @@ function buildRightBar() {
   const f = document.createElement('div'); f.className = 'fmt right';
   const pv = fbtn(ICON.eye, '서식 미리 보기 (Ctrl+Shift+M)', togglePreview);
   pv.id = 'pvBtn'; pv.setAttribute('aria-pressed', String(!!settings.preview));
-  f.append(pv, fbtn(ICON.gear, '설정', openSettings));
+  const rc = fbtn(ICON.clock, '최근 파일 (Ctrl+Shift+O)', () => toggleRecent());
+  rc.id = 'recentBtn'; rc.setAttribute('aria-pressed', String($('side').classList.contains('open')));
+  f.append(rc, pv, fbtn(ICON.gear, '설정', openSettings));
   return f;
 }
 function insertText(s) {
@@ -1081,7 +1181,7 @@ function showMenu(wrap, btn, idx) {
       const head = document.createElement('div'); head.className = 'empty'; head.textContent = '최근 파일';
       m.append(head);
       if (!recent.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = ' 없음'; m.append(e); }
-      recent.forEach(n => {
+      recent.slice(0, 10).forEach(({ name: n }) => {
         const b = document.createElement('button'); b.setAttribute('role', 'menuitem');
         const s = document.createElement('span'); s.textContent = ' ' + n; b.append(s);
         b.onclick = () => { closeMenus(); const t = state.tabs.find(t => t.name === n); if (t) switchTab(t.id); else { toast('이 파일은 다시 열어야 합니다'); openFile(); } };
@@ -1119,8 +1219,10 @@ document.addEventListener('keydown', e => {
     blkClear();
   }
   if (e.key === 'Escape' && openMenu) return act(() => {});
+  if (e.key === 'Escape' && $('side').classList.contains('open')) { toggleRecent(false); ed.focus(); return; }
   if (c && !e.shiftKey && k === 's') return act(() => save(false));
   if (c && e.shiftKey && k === 's') return act(() => save(true));
+  if (c && e.shiftKey && k === 'o') return act(() => toggleRecent());
   if (c && k === 'o') return act(openFile);
   if (c && !e.shiftKey && k === 'b') return act(() => wrapSel('**'));
   if (c && !e.shiftKey && k === 'i') return act(() => wrapSel('*'));
@@ -1152,6 +1254,7 @@ window.addEventListener('drop', async e => {
 });
 
 renderMenubar();
+renderRecent();
 applySettings();
 loadTabToEditor();
 showPreviewState();

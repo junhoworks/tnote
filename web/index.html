@@ -707,7 +707,9 @@ function toggleLinePrefix(prefix) {
   if (settings.preview) togglePreview();
   const [a, b] = lineRange(), lines = ed.value.slice(a, b).split('\n');
   const strip = l => l.replace(/^(\s*)([-*+] \[[ xX]\] |[-*+] |\d+\. |> )/, '$1');
-  const has = l => prefix === '1. ' ? /^\s*\d+\. /.test(l) : l.trimStart().startsWith(prefix);
+  // Compare list kinds, not text: "- " must not match "- [ ] ", or bullet would remove a to-do list instead of converting it
+  const kind = l => { const m = /^\s*([-*+] \[[ xX]\] |[-*+] |\d+\. |> )/.exec(l); return !m ? '' : m[1].includes('[') ? 'task' : /\d/.test(m[1]) ? 'num' : m[1][0] === '>' ? 'quote' : 'bullet'; };
+  const has = l => kind(l) === kind(prefix);
   const all = lines.every(has);
   const out = lines.map((l, i) => all ? strip(l) : (prefix === '1. ' ? (i + 1) + '. ' : prefix) + strip(l)).join('\n');
   replaceRange(a, b, out, a, a + out.length);

@@ -1050,7 +1050,13 @@ namespace NotepadClone
             EnsureEditing();
             int a, e; SelectLines(out a, out e);
             var lines = Cur.Box.Text.Substring(a, e - a).Split('\n');
-            Func<string, bool> has = l => prefix == "1. " ? Regex.IsMatch(l, @"^\s*\d+\. ") : l.TrimStart().StartsWith(prefix);
+            // Compare list kinds, not text: "- " must not match "- [ ] ", or bullet would remove a to-do list instead of converting it
+            Func<string, string> kind = l =>
+            {
+                var m = ListPrefix.Match(l); string p = m.Groups[2].Value;
+                return !m.Success ? "" : p.Contains("[") ? "task" : char.IsDigit(p[0]) ? "num" : p[0] == '>' ? "quote" : "bullet";
+            };
+            Func<string, bool> has = l => kind(l) == kind(prefix);
             bool all = lines.All(has);
             ReplaceLines((l, i) => all ? ListPrefix.Replace(l, "$1") : (prefix == "1. " ? (i + 1) + ". " : prefix) + ListPrefix.Replace(l, "$1"));
         }

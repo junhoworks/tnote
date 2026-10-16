@@ -369,6 +369,24 @@ namespace NotepadClone
 
         protected override void OnHandleCreated(EventArgs e) { tom = null; base.OnHandleCreated(e); }
 
+        [DllImport("imm32.dll")] static extern IntPtr ImmGetContext(IntPtr h);
+        [DllImport("imm32.dll")] static extern bool ImmReleaseContext(IntPtr h, IntPtr c);
+        [DllImport("imm32.dll", CharSet = CharSet.Unicode)] static extern int ImmGetCompositionString(IntPtr c, int index, IntPtr buf, int len);
+
+        // True while the IME is composing a character (e.g. a Hangul syllable). Querying or restyling
+        // the control then cancels the composition and splits the syllable into separate jamo.
+        public bool Composing
+        {
+            get
+            {
+                if (!IsHandleCreated) return false;
+                IntPtr c = ImmGetContext(Handle);
+                if (c == IntPtr.Zero) return false;
+                try { return ImmGetCompositionString(c, 0x0008 /* GCS_COMPSTR */, IntPtr.Zero, 0) > 0; }
+                finally { ImmReleaseContext(Handle, c); }
+            }
+        }
+
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
             if (keyData == (Keys.Control | Keys.V) || keyData == (Keys.Shift | Keys.Insert)) { PastePlain(); return true; }
@@ -479,7 +497,11 @@ namespace NotepadClone
 
             if (args.Length > 0) foreach (var a in args) OpenFile(a);
             if (docs.Count == 0) NewTab();
-            restyleTimer.Tick += (s, e) => { restyleTimer.Stop(); if (Cur != null) Restyle(Cur); };
+            restyleTimer.Tick += (s, e) =>
+            {
+                if (Cur != null && Cur.Box.Composing) return; // try again on the next tick, once the syllable is done
+                restyleTimer.Stop(); if (Cur != null) { Restyle(Cur); UpdateStatus(); }
+            };
             ApplyTheme();
             Resize += (s, e) => strip.Invalidate();
             FormClosing += (s, e) => { foreach (var d in docs.ToList()) if (!ConfirmDiscard(d)) { e.Cancel = true; return; } };
@@ -812,6 +834,7 @@ namespace NotepadClone
         {
             var d = Cur;
             if (d == null) return;
+            if (d.Box.Composing) { restyleTimer.Stop(); restyleTimer.Start(); return; } // the timer updates it once the syllable is done
             int sel = d.Box.SelectionStart, line = d.Box.GetLineFromCharIndex(sel);
             int col = sel - d.Box.GetFirstCharIndexFromLine(line);
             status.Pos = string.Format("줄 {0}, 열 {1}", line + 1, col + 1);

@@ -113,12 +113,12 @@ namespace TNote
         public Action NewTab;
         public Palette P = Palette.Light;
         Point mouse = new Point(-1, -1);
-        const int TabTop = 6, TabH = 36, TabMax = 240, TabMin = 80, CapW = 46, IconW = 48;
+        const int TabTop = 12, TabH = 36, TabMax = 240, TabMin = 80, CapW = 46, IconW = 48;
 
         public TabStrip()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-            Height = 42;
+            Height = 48; // room above the tabs and logo, like Notepad
             Dock = DockStyle.Top;
         }
 
@@ -131,7 +131,7 @@ namespace TNote
         }
         Rectangle TabRect(int i) { int w = TabWidth(); return new Rectangle(IconW + i * w, TabTop, w, TabH); }
         Rectangle CloseRect(int i) { var r = TabRect(i); return new Rectangle(r.Right - 36, r.Y + 6, 28, 24); }
-        Rectangle PlusRect() { var r = TabRect(Docs().Count); return new Rectangle(r.X + 6, 8, 34, 30); }
+        Rectangle PlusRect() { var r = TabRect(Docs().Count); return new Rectangle(r.X + 6, TabTop + 2, 34, 30); }
         Rectangle Cap(int k) { return new Rectangle(Width - CapW * (3 - k), 0, CapW, 32); } // 0 min,1 max,2 close
 
         protected override void OnPaint(PaintEventArgs e)
@@ -140,7 +140,7 @@ namespace TNote
             g.Clear(P.Title);
             var docs = Docs(); var active = Active();
             // app glyph
-            var mark = Ui.AppIcon(32); if (mark != null) g.DrawImage(mark, 9, 5, 32, 32);
+            var mark = Ui.AppIcon(32); if (mark != null) g.DrawImage(mark, 9, TabTop + (TabH - 32) / 2, 32, 32); // centered on the tabs
             for (int i = 0; i < docs.Count; i++)
             {
                 var r = TabRect(i); var d = docs[i]; bool on = d == active, hov = r.Contains(mouse);

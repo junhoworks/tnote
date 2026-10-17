@@ -1,4 +1,4 @@
-# Tnote does not draw its own icon: it copies the generated set from the shared T Brand repo
+# tNote does not draw its own icon: it copies the generated set from the shared T Brand repo
 # (github.com/junhoworks/t-brand, tools\make-icons.ps1 -> dist\tnote\). Run after the brand icons change,
 # then rebuild the exe:
 #   powershell -ExecutionPolicy Bypass -File desktop\sync-brand.ps1 [-Brand C:\dev\t-brand]

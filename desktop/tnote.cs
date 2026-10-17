@@ -113,12 +113,12 @@ namespace TNote
         public Action NewTab;
         public Palette P = Palette.Light;
         Point mouse = new Point(-1, -1);
-        const int TabTop = 12, TabH = 36, TabMax = 240, TabMin = 80, CapW = 46, IconW = 48;
+        const int TabTop = 10, TabH = 32, TabMax = 240, TabMin = 80, CapW = 46, IconW = 48;
 
         public TabStrip()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-            Height = 48; // room above the tabs and logo, like Notepad
+            Height = 42; // Notepad: tabs 10px from the top, 32px tall
             Dock = DockStyle.Top;
         }
 
@@ -130,8 +130,8 @@ namespace TNote
             return Math.Max(TabMin, Math.Min(TabMax, room / n));
         }
         Rectangle TabRect(int i) { int w = TabWidth(); return new Rectangle(IconW + i * w, TabTop, w, TabH); }
-        Rectangle CloseRect(int i) { var r = TabRect(i); return new Rectangle(r.Right - 36, r.Y + 6, 28, 24); }
-        Rectangle PlusRect() { var r = TabRect(Docs().Count); return new Rectangle(r.X + 6, TabTop + 2, 34, 30); }
+        Rectangle CloseRect(int i) { var r = TabRect(i); return new Rectangle(r.Right - 36, r.Y + 4, 28, 24); }
+        Rectangle PlusRect() { var r = TabRect(Docs().Count); return new Rectangle(r.X + 6, TabTop + 1, 34, 30); }
         Rectangle Cap(int k) { return new Rectangle(Width - CapW * (3 - k), 0, CapW, 32); } // 0 min,1 max,2 close
 
         protected override void OnPaint(PaintEventArgs e)
@@ -140,7 +140,7 @@ namespace TNote
             g.Clear(P.Title);
             var docs = Docs(); var active = Active();
             // app glyph
-            var mark = Ui.AppIcon(32); if (mark != null) g.DrawImage(mark, 9, TabTop + (TabH - 32) / 2, 32, 32); // centered on the tabs
+            var mark = Ui.AppIcon(20); if (mark != null) g.DrawImage(mark, 14, TabTop + (TabH - 20) / 2, 20, 20); // where Notepad puts its 16px icon, centered on the tabs
             for (int i = 0; i < docs.Count; i++)
             {
                 var r = TabRect(i); var d = docs[i]; bool on = d == active, hov = r.Contains(mouse);
@@ -170,7 +170,7 @@ namespace TNote
             {
                 var r = Cap(k); bool hov = r.Contains(mouse);
                 if (hov) using (var b = new SolidBrush(k == 2 ? Color.FromArgb(0xC4, 0x2B, 0x1C) : P.Hover)) g.FillRectangle(b, r);
-                Ui.Glyph(g, caps[k], Ui.Icon7, r, hov && k == 2 ? Color.White : P.Text);
+                Ui.Glyph(g, caps[k], Ui.Icon8, r, hov && k == 2 ? Color.White : P.Text);
                 g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
             }
         }

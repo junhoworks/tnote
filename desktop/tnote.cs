@@ -67,8 +67,8 @@ namespace TNote
             g.TextRenderingHint = hint;
         }
 
-        // The app icon at a given size, from the exe's tnote.ico. Its entries are PNG, which Icon can't decode
-        // but the shell can, so it's loaded through PrivateExtractIcons.
+        // The app icon at a given size, from the exe's tnote.ico (T Brand, see sync-brand.ps1). The shell picks
+        // the nearest size the ico holds and scales it, which Icon(Icon, Size) on an exe icon can't do.
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int PrivateExtractIcons(string file, int index, int cx, int cy, IntPtr[] icons, int[] ids, int n, int flags);
         [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr h);
         static readonly Dictionary<int, Bitmap> appIcons = new Dictionary<int, Bitmap>();
@@ -2422,7 +2422,34 @@ namespace TNote
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            EnsureStartMenuShortcut();
             Application.Run(new MainForm(args));
+        }
+
+        // Keeps Start Menu\Programs\Tnote.lnk pointing at this exe with its icon, so Start and taskbar pins have a
+        // real shortcut to take the icon from (there is no installer). Same as tShot's.
+        static void EnsureStartMenuShortcut()
+        {
+            try
+            {
+                string exe = Application.ExecutablePath;
+                string lnk = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Tnote.lnk");
+                var shellType = Type.GetTypeFromProgID("WScript.Shell");
+                object shell = Activator.CreateInstance(shellType);
+                object sc = shellType.InvokeMember("CreateShortcut", System.Reflection.BindingFlags.InvokeMethod, null, shell, new object[] { lnk });
+                var t = sc.GetType();
+                if (File.Exists(lnk))
+                {
+                    string cur = (string)t.InvokeMember("TargetPath", System.Reflection.BindingFlags.GetProperty, null, sc, null);
+                    if (string.Equals(cur, exe, StringComparison.OrdinalIgnoreCase)) return;
+                }
+                t.InvokeMember("TargetPath", System.Reflection.BindingFlags.SetProperty, null, sc, new object[] { exe });
+                t.InvokeMember("WorkingDirectory", System.Reflection.BindingFlags.SetProperty, null, sc, new object[] { Path.GetDirectoryName(exe) });
+                t.InvokeMember("IconLocation", System.Reflection.BindingFlags.SetProperty, null, sc, new object[] { exe + ",0" });
+                t.InvokeMember("Description", System.Reflection.BindingFlags.SetProperty, null, sc, new object[] { "Tnote 메모장" });
+                t.InvokeMember("Save", System.Reflection.BindingFlags.InvokeMethod, null, sc, null);
+            }
+            catch (Exception) { } // a missing shortcut only costs the pinned icon
         }
     }
 }

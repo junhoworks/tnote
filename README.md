@@ -36,7 +36,7 @@ cd desktop
 .\tnote.exe
 ```
 
-The program icon comes from the shared T Brand repo ([junhoworks/t-brand](https://github.com/junhoworks/t-brand), private), which draws the icons for all T apps; this repo does not draw it. After the brand icons change, run `desktopsync-brand.ps1` (it expects `t-brand` next to this repo, or pass `-Brand <path>`) and rebuild: it copies `dist	note	note.ico` here (DIB entries only, since the built-in csc `/win32icon` rejects PNG ones) and embeds `tnote-128.png` in `web/index.html` as the app icon and favicon. The title bar draws the icon from the exe. On start the app keeps a `Tnote.lnk` shortcut in Start MenuPrograms, so Start and taskbar pins show the icon without an installer.
+The program icon comes from the shared T Brand repo ([junhoworks/t-brand](https://github.com/junhoworks/t-brand), private), which draws the icons for all T apps; this repo does not draw it. After the brand icons change, run `desktop\sync-brand.ps1` (it expects `t-brand` next to this repo, or pass `-Brand <path>`) and rebuild: it copies `dist\tnote\tnote.ico` here (DIB entries only, since the built-in csc `/win32icon` rejects PNG ones) and embeds `tnote-128.png` in `web/index.html` as the app icon and favicon. The title bar draws the icon from the exe. On start the app keeps a `Tnote.lnk` shortcut in Start Menu\Programs, so Start and taskbar pins show the icon without an installer.
 
 `shot.ps1` builds the app, opens it at 1000×600 and saves a screenshot to `%TEMP%\tnote.png`. If the execution policy blocks it:
 

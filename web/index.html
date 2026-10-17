@@ -675,8 +675,43 @@ ed.addEventListener('mousedown', e => {
 });
 document.addEventListener('mousemove', e => { if (blk.drag) { blk.px = e.clientX; blk.py = e.clientY; if (!blk.on) { blk.on = true; updateFormatItems(); } blkMove(); } });
 document.addEventListener('mouseup', () => { if (blk.drag) { blk.drag = false; clearInterval(blk.timer); } });
-ed.addEventListener('copy', e => { if (blk.on && blk.segs.length) { e.clipboardData.setData('text/plain', blkText()); e.preventDefault(); } });
-ed.addEventListener('cut', e => { if (blk.on && blk.segs.length) { e.clipboardData.setData('text/plain', blkText()); e.preventDefault(); blkDelete(); } });
+let lastBlockCopy = null; // what the last block copy or cut put on the clipboard; pasting exactly that goes in as a column
+ed.addEventListener('copy', e => { if (blk.on && blk.segs.length) { e.clipboardData.setData('text/plain', lastBlockCopy = blkText()); e.preventDefault(); } });
+ed.addEventListener('cut', e => { if (blk.on && blk.segs.length) { e.clipboardData.setData('text/plain', lastBlockCopy = blkText()); e.preventDefault(); blkDelete(); } });
+ed.addEventListener('paste', e => {
+  const t = (e.clipboardData.getData('text/plain') || '').replace(/\r\n/g, '\n');
+  if (lastBlockCopy !== null && t === lastBlockCopy && t.includes('\n')) { e.preventDefault(); blkColumnPaste(t.split('\n')); }
+  else if (blk.on) blkClear();
+});
+// Line i of the paste replaces the i-th part of a selected block, or goes in at the caret's x on the i-th visual
+// line below it. Short lines are padded with spaces up to that x, and lines past the end are added. One undo step.
+function blkColumnPaste(lines) {
+  blkMirror();
+  const v = ed.value, segs = blk.on ? blk.segs.slice() : [];
+  const caret = blkCharPt(ed.selectionStart), x = segs.length ? segs[0].x : caret.x;
+  const at = blkSegs(x, 0, x, 1e9), ends = blkSegs(1e9, 0, 1e9, 1e9), left = blkCharPt(0).x;
+  const sp = document.createElement('span'); sp.style.whiteSpace = 'pre'; sp.textContent = ' '.repeat(10); bMir.append(sp);
+  const space = sp.getBoundingClientRect().width / 10 || 1; sp.remove();
+  const pad = px => ' '.repeat(Math.max(0, Math.round(px / space)));
+  const row = y => at.reduce((m, s, i) => Math.abs(s.y - y) < Math.abs(at[m].y - y) ? i : m, 0);
+  const first = segs.length ? row(segs[segs.length - 1].y) - segs.length + 1 : row(caret.y);
+  const edits = []; let tail = '';
+  for (let i = 0; i < Math.max(lines.length, segs.length); i++) {
+    const text = i < lines.length ? lines[i] : '';
+    if (i < segs.length) { edits.push({ a: segs[i].a, b: segs[i].b, t: text }); continue; }
+    const k = first + i;
+    if (k >= at.length) { tail += '\n' + pad(x - left) + text; continue; }
+    const a = i === 0 ? ed.selectionStart : at[k].a, endX = ends[k].x > 1e8 ? left : ends[k].x;
+    edits.push({ a, b: a, t: (a === ends[k].a && endX < x ? pad(x - endX) : '') + text });
+  }
+  const lo = edits[0].a, hi = tail ? v.length : Math.max(...edits.map(s => s.b)); let r = '', p = lo;
+  for (const s of edits) { r += v.slice(p, s.a) + s.t; p = s.b; }
+  r += v.slice(p, hi) + tail;
+  const pos = lo + edits[0].t.length;
+  blkClear(); ed.focus(); ed.setSelectionRange(lo, hi);
+  if (r !== v.slice(lo, hi) && !document.execCommand('insertText', false, r)) { ed.setRangeText(r, lo, hi, 'end'); ed.dispatchEvent(new Event('input')); }
+  ed.setSelectionRange(pos, pos);
+}
 ed.addEventListener('scroll', blkSync);
 new ResizeObserver(() => { if (shownWrap()) blkClear(); }).observe(ed);
 
@@ -1212,10 +1247,11 @@ document.addEventListener('keydown', e => {
     if (c && (k === 'c' || k === 'x')) {
       // through the copy and cut events (the handlers above), which work on file:// pages where the async clipboard API may not
       e.preventDefault(); ed.focus();
-      if (!document.execCommand(k === 'x' ? 'cut' : 'copy')) { navigator.clipboard.writeText(blkText()).catch(() => {}); if (k === 'x') blkDelete(); }
+      if (!document.execCommand(k === 'x' ? 'cut' : 'copy')) { navigator.clipboard.writeText(lastBlockCopy = blkText()).catch(() => {}); if (k === 'x') blkDelete(); }
       return;
     }
     if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); blkDelete(); return; }
+    if (c && k === 'v') return; // the paste event decides: column paste into the block, or clear it
     blkClear();
   }
   if (e.key === 'Escape' && openMenu) return act(() => {});

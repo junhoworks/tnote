@@ -779,8 +779,55 @@ namespace TNote
             return Array.IndexOf(NativeFormatKeys, keyData) >= 0;
         }
 
-        public void PastePlain() { if (Clipboard.ContainsText()) SelectedText = Clipboard.GetText().Replace("\r\n", "\n"); }
+        // Text copied as a block pastes as a column: line i goes into the i-th line down from the caret, at the
+        // caret's x, or replaces the i-th part of a selected block. Short lines are padded with spaces up to that
+        // x, and lines past the end of the text are added. One undo step.
+        static string lastBlockCopy;
 
+        public void PastePlain()
+        {
+            if (!Clipboard.ContainsText()) return;
+            string t = Clipboard.GetText().Replace("\r\n", "\n");
+            if (lastBlockCopy != null && t == lastBlockCopy && t.Contains("\n")) { ColumnPaste(t.Split('\n')); return; }
+            SelectedText = t;
+        }
+
+        void ColumnPaste(string[] lines)
+        {
+            var doc = Doc; if (doc == null) return;
+            string s = PaintText;
+            var segs = blockOn ? BlockSegments() : new List<int[]>();
+            int first, x;
+            if (segs.Count > 0) { first = segs[0][2]; int a0, b0; LineRange(first, out a0, out b0); x = XOf(segs[0][0], b0, GetPositionFromCharIndex(a0).Y); }
+            else { first = GetLineFromCharIndex(SelectionStart); x = GetPositionFromCharIndex(SelectionStart).X; }
+            float space = Math.Max(1, TextRenderer.MeasureText("x x", Font, Size.Empty, TextFormatFlags.NoPadding).Width - TextRenderer.MeasureText("xx", Font, Size.Empty, TextFormatFlags.NoPadding).Width) * Zoom;
+            Func<int, string> pad = px => new string(' ', Math.Max(0, (int)Math.Round(px / space)));
+            int lastLine = GetLineFromCharIndex(s.Length), left = GetPositionFromCharIndex(GetFirstCharIndexFromLine(lastLine)).X;
+            var edits = new List<Tuple<int, int, string>>(); // start, end, new text; one per line
+            string tail = ""; // lines past the end of the text
+            for (int i = 0; i < Math.Max(lines.Length, segs.Count); i++)
+            {
+                string text = i < lines.Length ? lines[i] : "";
+                if (i < segs.Count) { edits.Add(Tuple.Create(segs[i][0], segs[i][1], text)); continue; }
+                int line = first + i;
+                if (line > lastLine) { tail += "\r" + pad(x - left) + text; continue; }
+                int a, b; LineRange(line, out a, out b);
+                int y = GetPositionFromCharIndex(a).Y, at = IndexAtX(a, b, x), end = XOf(b, b, y);
+                edits.Add(Tuple.Create(at, at, (at == b && end < x ? pad(x - end) : "") + text));
+            }
+            int caret = edits.Count > 0 ? edits[0].Item1 + edits[0].Item3.Length : s.Length;
+            blockQuiet = true;
+            bool grouped = false;
+            try { doc.BeginEditCollection(); grouped = true; } catch (Exception) { } // one undo step (RichEdit 8+)
+            try
+            {
+                if (tail.Length > 0) doc.Range(s.Length, s.Length).Text = tail;
+                foreach (var ed in edits.OrderByDescending(ed => ed.Item1)) doc.Range(ed.Item1, ed.Item2).Text = ed.Item3; // bottom up
+            }
+            finally { if (grouped) doc.EndEditCollection(); blockQuiet = false; }
+            ClearBlock();
+            Select(Math.Min(caret, TextLength), 0);
+        }
         dynamic Doc
         {
             get
@@ -1214,7 +1261,7 @@ namespace TNote
 
         public string BlockText() { return string.Join("\r\n", BlockSegments().Select(sg => PaintText.Substring(sg[0], sg[1] - sg[0]))); }
 
-        public void BlockCopy() { Clipboard.SetText(BlockText()); }
+        public void BlockCopy() { string t = BlockText(); lastBlockCopy = t.Replace("\r\n", "\n"); Clipboard.SetText(t); }
         public void BlockCut() { BlockCopy(); BlockDelete(); }
 
         // Bold, italic or strikethrough on each line's part of the block: formatting in place (the block stays),

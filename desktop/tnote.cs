@@ -132,7 +132,12 @@ namespace TNote
         Rectangle TabRect(int i) { int w = TabWidth(); return new Rectangle(IconW + i * w, TabTop, w, TabH); }
         Rectangle CloseRect(int i) { var r = TabRect(i); return new Rectangle(r.Right - 36, r.Y + 4, 28, 24); }
         Rectangle PlusRect() { var r = TabRect(Docs().Count); return new Rectangle(r.X + 6, TabTop + 1, 34, 30); }
-        Rectangle Cap(int k) { return new Rectangle(Width - CapW * (3 - k), 0, CapW, 32); } // 0 min,1 max,2 close
+        // 0 min,1 max,2 close. Maximized, the buttons fill the strip's height so their glyphs sit in its middle, as Notepad's do.
+        Rectangle Cap(int k)
+        {
+            bool maxed = Win != null && Win.WindowState == FormWindowState.Maximized;
+            return new Rectangle(Width - CapW * (3 - k), 0, CapW, maxed ? Height : 32);
+        }
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -1463,17 +1468,19 @@ namespace TNote
             SetWindowPos(Handle, IntPtr.Zero, 0, 0, 0, 0, 0x27); // SWP_FRAMECHANGED|NOMOVE|NOSIZE|NOZORDER
         }
         [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+        [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
+        [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr h);
 
         protected override void WndProc(ref Message m)
         {
             const int WM_NCCALCSIZE = 0x83, WM_NCHITTEST = 0x84;
             if (m.Msg == WM_NCCALCSIZE && m.WParam != IntPtr.Zero)
             {
-                if (WindowState == FormWindowState.Maximized)
+                if (IsZoomed(Handle)) // WindowState still says Normal while the maximize is being laid out
                 {
                     // A maximized window overhangs the screen by its frame; pull the client area back in
                     var r = (RECT)Marshal.PtrToStructure(m.LParam, typeof(RECT));
-                    int f = SystemInformation.FrameBorderSize.Width + 4;
+                    int f = GetSystemMetrics(32 /* SM_CXSIZEFRAME */) + GetSystemMetrics(92 /* SM_CXPADDEDBORDER */);
                     r.L += f; r.T += f; r.R -= f; r.B -= f;
                     Marshal.StructureToPtr(r, m.LParam, false);
                 }
